@@ -70,7 +70,8 @@ class MainWindow(QMainWindow):
     
     def _init_ui(self):
         """初始化UI"""
-        self.setWindowTitle("Python脚本批量执行工具 v1.0.0")
+        from version import get_version_string
+        self.setWindowTitle(f"Python脚本批量执行工具 v{get_version_string()}")
         self.setGeometry(100, 100, 1400, 900)
         
         # 创建中央部件

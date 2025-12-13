@@ -1,0 +1,94 @@
+from CommonFunction.FunctionClass_V2 import *
+from UtilityClass.UtilityClass01_DeviceConnectInit import *
+from CommonFunction.Common00_Fuction import *
+from CommonFunction.Common04_SoftwareCommonFunction import STLA_M_EncapsulationClass
+
+if __name__ == '__main__':
+
+    start_capture_prints()
+    STLA_M_EncapsulationClass.InitDevice()
+    STLA_M_EncapsulationClass.InitAllCANMessage()
+    STLA_M_EncapsulationClass.TestCaseConfig(RecordStart = True, case_name = "STLA-M-BEPR")
+    PreCondition = STLA_M_EncapsulationClass.EnterPlantModePreCondition(CONFIG_VHL = 1)
+   
+    继电器控制板.Modbus.SetRegister(iID=1,Reg=3072,Data='8181')
+    电阻控制板.Modbus.SetRegister(iID=1,Reg=3072,Data='220')
+    STLA_CAN.DBC.SetSignal(1, get_message_for_signal('BMS_DC_RELAY_MES_EVSE_VOLTAGE'),'BMS_DC_RELAY_MES_EVSE_VOLTAGE', 20)
+    信号发生器.SCPI.Write(':SOUR1:APPL:SQU 1000,12.1,0,0;:SOUR1:FUNC:SQU:DCYC 50;:OUTP1 ON')
+    交流源载一体机.Set.Basic(ACPwrModeEnum.SOUR, ACChannelEnum.EACH, ACCouplingEnum.AC,0, ACPwrWorkModeEnum.CC)
+    交流源载一体机.Set.Freq(dFreq=50)
+    交流源载一体机.Set.Volt(dealListData([20.0, 20.0, 20.0]),dealListData([0.0, 0.0, 0.0]))
+    交流源载一体机.Out.Enable(ACeEnable.ON)
+    Sleep(17000)
+
+    AssignmentCode1 = 156
+    AssignmentCode2 = 157
+    AssignmentCode3 = 158
+    AssignmentCode4 = 159
+    TestResult21 = not(STLA_M_EncapsulationClass.CheckFaultIsInFaultList(AssignmentCode1))
+    TestResult22 = not(STLA_M_EncapsulationClass.CheckFaultIsInFaultList(AssignmentCode2))
+    TestResult23 = not(STLA_M_EncapsulationClass.CheckFaultIsInFaultList(AssignmentCode3))
+    TestResult24 = not(STLA_M_EncapsulationClass.CheckFaultIsInFaultList(AssignmentCode4))
+    TestResult2 = TestResult21 and TestResult22 and TestResult23 and TestResult24
+    print(f"Result_Test_ACPhaseOutOfRange= {TestResult21}")
+    print(f"Result_Test_ProxiVoltageOutOfRange= {TestResult22}")
+    print(f"Result_Test_PilotDutyOutOfRange= {TestResult23}")
+    print(f"Result_Test_DCLinesOutOfRange= {TestResult24}")
+
+    电阻控制板.Modbus.SetRegister(iID=1,Reg=3072,Data='2300')
+    Sleep(1000)
+
+    STLA_M_EncapsulationClass.Send590DiagMessageAndLog(
+        message="03 22 D5 BD",
+        expected_response=["0x05", "0x62", "0xD5", "0xBD", "0x02", "0x0F"],
+        check_len=6
+    )
+    Sleep(5000)
+
+    STLA_M_EncapsulationClass.Send590DiagMessageAndLog(
+        message="05 31 01 DD 43 00",
+        expected_response=["0x06", "0x71", "0x01", "0xDD", "0x43", "0x00"],
+        check_len=6
+    )
+
+    STLA_M_EncapsulationClass.Send590DiagMessageAndLog(
+        message="03 22 D4 F7",
+        expected_response=["0x04", "0x62", "0xD4", "0xF7", "0x00"],
+        check_len=5
+    )
+
+
+    AssignmentCode=159
+
+    STLA_M_EncapsulationClass.ExitPlantMode()
+    STLA_M_EncapsulationClass.TestCaseConfig(RecordStart = False, case_name = "STLA-M-BEPR")
+    STLA_M_EncapsulationClass.RCD_Exit_EcoMode()
+    STLA_M_EncapsulationClass.CloseAllDevice()
+    STLA_M_EncapsulationClass.CloseAllCANMessage()
+    TestResult1 = STLA_M_EncapsulationClass.PlantModeScreenshot(faultcode=AssignmentCode, VerifyWhetherReportFault=False)
+
+
+    print(f"前置条件结果:{PreCondition}, 测试步骤1结果: {TestResult1}, 测试步骤2结果: {TestResult2}")
+    TestResult = True if PreCondition and TestResult1 and TestResult2 else False
+    if TestResult == True:
+        TestResultDisplay = '合格'
+        print(TestResultDisplay)
+    else:
+        TestResultDisplay = '不合格'
+        print(TestResultDisplay)
+    
+    all_prints = stop_capture_prints()
+    Log4NetWrapper.WriteToOutput_KeyInfo(TestResultDisplay, 
+        f"\n"+
+        f"1. Charge LED is solid white color. \n"+
+        f"\n"+
+        f"========================================================================="+
+        f"\n"+
+        f"{all_prints}"
+    )
+
+
+
+
+
+

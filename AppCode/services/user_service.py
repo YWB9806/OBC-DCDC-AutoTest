@@ -443,13 +443,17 @@ class UserService:
     def _ensure_default_admin(self):
         """确保默认超级管理员账户存在"""
         try:
+            import os
             admin = self.user_repo.get_by_username('admin')
             
             if not admin:
+                # 从环境变量读取密码，如果没有则使用默认值
+                admin_password = os.environ.get('ADMIN_PASSWORD', 'YWB9806')
+                
                 # 创建默认超级管理员账户
                 user_data = {
                     'username': 'admin',
-                    'password_hash': self._hash_password('admin'),  # 默认密码：admin
+                    'password_hash': self._hash_password(admin_password),
                     'role': UserRole.SUPER_ADMIN,
                     'email': 'admin@example.com',
                     'is_active': True,
@@ -460,7 +464,7 @@ class UserService:
                 self.user_repo.create(user_data)
                 
                 if self.logger:
-                    self.logger.info("Default super admin account created (username: admin, password: admin)")
+                    self.logger.info("Default super admin account created (username: admin)")
             else:
                 # 如果admin账户存在但不是超级管理员，升级为超级管理员
                 if admin.get('role') != UserRole.SUPER_ADMIN:

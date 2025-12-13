@@ -656,8 +656,18 @@ class ExecutionEngine(IExecutionEngine):
             
             # 启动进程（实时输出模式，使用unbuffered模式）
             import os
+            import sys
             env = os.environ.copy()
             env['PYTHONUNBUFFERED'] = '1'  # 禁用Python输出缓冲
+            
+            # Windows平台下隐藏控制台窗口
+            startupinfo = None
+            creationflags = 0
+            if sys.platform == 'win32':
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+                creationflags = subprocess.CREATE_NO_WINDOW
             
             process = subprocess.Popen(
                 cmd,
@@ -666,7 +676,9 @@ class ExecutionEngine(IExecutionEngine):
                 text=True,
                 bufsize=1,  # 行缓冲
                 universal_newlines=True,
-                env=env
+                env=env,
+                startupinfo=startupinfo,
+                creationflags=creationflags
             )
             
             with self._lock:

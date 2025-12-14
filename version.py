@@ -3,16 +3,16 @@
 用于管理应用程序版本信息和更新检查
 """
 
-__version__ = "1.0.3"
-__version_info__ = (1, 0, 3)
+__version__ = "1.0.4"
+__version_info__ = (1, 0, 4)
 
 # 版本信息
 VERSION = {
     "major": 1,
     "minor": 0,
-    "patch": 3,
+    "patch": 4,
     "build": 0,
-    "release_date": "2025-12-13",
+    "release_date": "2025-12-14",
     "release_type": "stable"  # stable, beta, alpha
 }
 
@@ -37,8 +37,8 @@ UPDATE_CONFIG = {
     # 更新检查间隔（秒）
     "check_interval": 86400,  # 24小时
     
-    # 是否自动检查更新
-    "auto_check": True,
+    # 是否自动检查更新（v1.0.4改为手动检查）
+    "auto_check": False,
     
     # 是否显示预发布版本
     "show_prerelease": False,

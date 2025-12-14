@@ -46,14 +46,16 @@ class ExecutionPanel(QWidget):
         self._is_paused = False  # 标记是否暂停
         self._is_pausing = False  # 标记是否正在暂停
         self._is_resuming = False  # 标记是否正在恢复
+        self.current_suite = None  # 当前测试方案
         
         self._init_ui()
         
         # 创建定时器用于更新执行状态
         self._update_timer = QTimer()
         self._update_timer.timeout.connect(self._update_execution_status)
-        self._update_timer.setInterval(500)  # 正常状态500ms更新一次
-        self._paused_update_interval = 2000  # 暂停状态2秒更新一次，减少负载
+        self._update_timer.setInterval(1000)  # 优化：改为1秒更新一次，减少负载
+        self._paused_update_interval = 3000  # 暂停状态3秒更新一次，进一步减少负载
+        self._last_update_time = {}  # 记录每个脚本的最后更新时间，避免频繁更新
         
         # 创建定时器用于更新时间显示
         self._time_timer = QTimer()
@@ -230,20 +232,28 @@ class ExecutionPanel(QWidget):
             self._displayed_lines = {}  # 重置已显示行数记录
             self._start_time = datetime.now()  # 记录开始时间
             self._is_stopping = False  # 重置停止标记
+            self._last_update_time = {}  # 重置更新时间记录
             
-            # 初始化执行列表
-            for script_path in script_paths:
-                row = self.execution_table.rowCount()
-                self.execution_table.insertRow(row)
-                
-                import os
-                script_name = os.path.basename(script_path)
-                
-                self.execution_table.setItem(row, 0, QTableWidgetItem(script_name))
-                self.execution_table.setItem(row, 1, QTableWidgetItem("等待中"))
-                self.execution_table.setItem(row, 2, QTableWidgetItem("0%"))
-                self.execution_table.setItem(row, 3, QTableWidgetItem("-"))
-                self.execution_table.setItem(row, 4, QTableWidgetItem("-"))
+            # 优化：禁用UI更新，批量添加完成后再刷新
+            self.execution_table.setUpdatesEnabled(False)
+            
+            try:
+                # 初始化执行列表
+                for script_path in script_paths:
+                    row = self.execution_table.rowCount()
+                    self.execution_table.insertRow(row)
+                    
+                    import os
+                    script_name = os.path.basename(script_path)
+                    
+                    self.execution_table.setItem(row, 0, QTableWidgetItem(script_name))
+                    self.execution_table.setItem(row, 1, QTableWidgetItem("等待中"))
+                    self.execution_table.setItem(row, 2, QTableWidgetItem("0%"))
+                    self.execution_table.setItem(row, 3, QTableWidgetItem("-"))
+                    self.execution_table.setItem(row, 4, QTableWidgetItem("-"))
+            finally:
+                # 恢复UI更新
+                self.execution_table.setUpdatesEnabled(True)
             
             # 获取当前方案信息
             suite_id = None
@@ -532,8 +542,8 @@ class ExecutionPanel(QWidget):
         self.logger.info("Execution resumed successfully")
         
         # 恢复正常更新频率
-        self._update_timer.setInterval(500)
-        self.logger.info("Update interval restored to 500ms (running state)")
+        self._update_timer.setInterval(1000)
+        self.logger.info("Update interval restored to 1000ms (running state)")
         
         # 发出恢复信号，让主窗口更新按钮状态
         exec_id = self._current_execution_id or self._current_batch_id
@@ -570,7 +580,7 @@ class ExecutionPanel(QWidget):
                 parent.resume_action.setEnabled(True)
     
     def _update_execution_status(self):
-        """更新执行状态"""
+        """更新执行状态（优化版 - 增量更新）"""
         if not self._is_executing:
             return
         
@@ -585,19 +595,31 @@ class ExecutionPanel(QWidget):
                 # 更新批次中每个脚本的状态
                 executions = status.get('executions', [])
                 
-                # 更新每个脚本的状态和输出
+                # 优化：只更新状态发生变化的脚本
+                current_time = datetime.now()
                 for i, execution in enumerate(executions):
                     if i < self.execution_table.rowCount():
-                        self._update_table_row(i, execution)
-                        # 只更新正在运行或刚完成的脚本的输出
                         exec_status = execution.get('status')
-                        if exec_status in ['RUNNING', 'SUCCESS', 'FAILED', 'ERROR', 'TIMEOUT']:
-                            exec_id_item = execution.get('id')
-                            if exec_id_item:
-                                script_name = execution.get('script_path', '').split('/')[-1].split('\\')[-1]
-                                self._update_output(exec_id_item, script_name)
+                        exec_id_item = execution.get('id')
+                        
+                        # 检查是否需要更新（状态变化或正在运行）
+                        last_update = self._last_update_time.get(exec_id_item, None)
+                        should_update = (
+                            exec_status in ['RUNNING', 'SUCCESS', 'FAILED', 'ERROR', 'TIMEOUT', 'CANCELLED'] and
+                            (last_update is None or (current_time - last_update).total_seconds() >= 1.0)
+                        )
+                        
+                        if should_update:
+                            self._update_table_row(i, execution)
+                            self._last_update_time[exec_id_item] = current_time
+                            
+                            # 只更新正在运行或刚完成的脚本的输出
+                            if exec_status in ['RUNNING', 'SUCCESS', 'FAILED', 'ERROR', 'TIMEOUT']:
+                                if exec_id_item:
+                                    script_name = execution.get('script_path', '').split('/')[-1].split('\\')[-1]
+                                    self._update_output(exec_id_item, script_name)
                 
-                # 更新统计信息
+                # 更新统计信息（降低频率）
                 self._update_statistics()
                 
                 # 计算总体进度

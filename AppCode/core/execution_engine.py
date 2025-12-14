@@ -371,19 +371,49 @@ class ExecutionEngine(IExecutionEngine):
         # 第二步：在锁外暂停进程（避免长时间持有锁导致UI卡顿）
         if should_pause_process and process:
             try:
-                # 使用psutil暂停进程及其所有子进程
-                parent = psutil.Process(process.pid)
+                # 检查进程是否还存在
+                try:
+                    parent = psutil.Process(process.pid)
+                except psutil.NoSuchProcess:
+                    if self.logger:
+                        self.logger.warning(f"暂停失败: 进程已结束 (PID: {process.pid}): {execution_id}")
+                    # 进程已结束，更新状态
+                    with self._lock:
+                        if execution_id in self._executions:
+                            # 不改变状态，让执行完成流程处理
+                            pass
+                    return False
                 
                 # 暂停主进程
-                parent.suspend()
+                try:
+                    parent.suspend()
+                    if self.logger:
+                        self.logger.debug(f"主进程已暂停 (PID: {process.pid})")
+                except psutil.AccessDenied:
+                    if self.logger:
+                        self.logger.error(f"暂停失败: 权限不足 (PID: {process.pid}): {execution_id}")
+                    return False
+                except Exception as e:
+                    if self.logger:
+                        self.logger.error(f"暂停主进程失败: {e} (PID: {process.pid}): {execution_id}")
+                    return False
                 
-                # 暂停所有子进程
-                children = parent.children(recursive=True)
-                for child in children:
-                    try:
-                        child.suspend()
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        pass
+                # 暂停所有子进程（容错处理）
+                try:
+                    children = parent.children(recursive=True)
+                    for child in children:
+                        try:
+                            child.suspend()
+                        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                            # 忽略已结束、无权限或僵尸进程
+                            pass
+                        except Exception as e:
+                            if self.logger:
+                                self.logger.debug(f"暂停子进程失败 (忽略): {e}")
+                except Exception as e:
+                    # 获取子进程列表失败，不影响主进程暂停
+                    if self.logger:
+                        self.logger.debug(f"获取子进程列表失败 (忽略): {e}")
                 
                 # 标记为暂停
                 with self._lock:
@@ -398,17 +428,9 @@ class ExecutionEngine(IExecutionEngine):
                 
                 return True
                 
-            except psutil.NoSuchProcess:
-                if self.logger:
-                    self.logger.error(f"暂停失败: 进程不存在 (PID: {process.pid}): {execution_id}")
-                return False
-            except psutil.AccessDenied:
-                if self.logger:
-                    self.logger.error(f"暂停失败: 权限不足 (PID: {process.pid}): {execution_id}")
-                return False
             except Exception as e:
                 if self.logger:
-                    self.logger.error(f"暂停失败: {e}: {execution_id}")
+                    self.logger.error(f"暂停失败 (未知错误): {e}: {execution_id}", exc_info=True)
                 return False
         
         return False
@@ -495,19 +517,47 @@ class ExecutionEngine(IExecutionEngine):
         # 第二步：在锁外恢复进程（避免长时间持有锁导致UI卡顿）
         if should_resume_process and process:
             try:
-                # 使用psutil恢复进程及其所有子进程
-                parent = psutil.Process(process.pid)
+                # 检查进程是否还存在
+                try:
+                    parent = psutil.Process(process.pid)
+                except psutil.NoSuchProcess:
+                    if self.logger:
+                        self.logger.warning(f"恢复失败: 进程已结束 (PID: {process.pid}): {execution_id}")
+                    # 进程已结束，清理暂停标记
+                    with self._pause_lock:
+                        self._paused_executions.discard(execution_id)
+                    return False
                 
-                # 恢复所有子进程
-                children = parent.children(recursive=True)
-                for child in children:
-                    try:
-                        child.resume()
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        pass
+                # 恢复所有子进程（容错处理）
+                try:
+                    children = parent.children(recursive=True)
+                    for child in children:
+                        try:
+                            child.resume()
+                        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                            # 忽略已结束、无权限或僵尸进程
+                            pass
+                        except Exception as e:
+                            if self.logger:
+                                self.logger.debug(f"恢复子进程失败 (忽略): {e}")
+                except Exception as e:
+                    # 获取子进程列表失败，不影响主进程恢复
+                    if self.logger:
+                        self.logger.debug(f"获取子进程列表失败 (忽略): {e}")
                 
                 # 恢复主进程
-                parent.resume()
+                try:
+                    parent.resume()
+                    if self.logger:
+                        self.logger.debug(f"主进程已恢复 (PID: {process.pid})")
+                except psutil.AccessDenied:
+                    if self.logger:
+                        self.logger.error(f"恢复失败: 权限不足 (PID: {process.pid}): {execution_id}")
+                    return False
+                except Exception as e:
+                    if self.logger:
+                        self.logger.error(f"恢复主进程失败: {e} (PID: {process.pid}): {execution_id}")
+                    return False
                 
                 # 恢复运行状态
                 with self._lock:
@@ -522,17 +572,9 @@ class ExecutionEngine(IExecutionEngine):
                 
                 return True
                 
-            except psutil.NoSuchProcess:
-                if self.logger:
-                    self.logger.error(f"恢复失败: 进程不存在 (PID: {process.pid}): {execution_id}")
-                return False
-            except psutil.AccessDenied:
-                if self.logger:
-                    self.logger.error(f"恢复失败: 权限不足 (PID: {process.pid}): {execution_id}")
-                return False
             except Exception as e:
                 if self.logger:
-                    self.logger.error(f"恢复失败: {e}: {execution_id}")
+                    self.logger.error(f"恢复失败 (未知错误): {e}: {execution_id}", exc_info=True)
                 return False
         
         return False

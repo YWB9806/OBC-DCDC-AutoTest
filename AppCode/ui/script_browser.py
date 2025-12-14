@@ -21,6 +21,7 @@ class ScriptBrowser(QWidget):
     # 信号定义
     script_selected = pyqtSignal(str)  # 单个脚本被选中
     scripts_selected = pyqtSignal(list)  # 多个脚本被选中
+    add_to_queue_requested = pyqtSignal(list, list)  # 请求添加到执行队列 (paths, info_list)
     
     def __init__(self, container, parent=None):
         """初始化脚本浏览器
@@ -41,6 +42,9 @@ class ScriptBrowser(QWidget):
         self._filtered_scripts = []
         self._current_suite = None  # 当前加载的方案
         self._root_path = None  # 脚本根目录
+        
+        # 保持线程引用，防止被垃圾回收导致崩溃
+        self._scan_thread = None
         
         self._init_ui()
         self._load_scripts()
@@ -90,6 +94,17 @@ class ScriptBrowser(QWidget):
         
         filter_layout.addStretch()
         
+        # 添加自定义路径按钮（移到这里，放在列设置按钮左边）
+        self.add_path_btn = QPushButton("添加路径")
+        self.add_path_btn.setToolTip("添加自定义脚本文件或文件夹")
+        self.add_path_btn.clicked.connect(self._on_add_custom_path)
+        filter_layout.addWidget(self.add_path_btn)
+        
+        # 添加列显示设置按钮
+        self.column_settings_btn = QPushButton("列设置")
+        self.column_settings_btn.clicked.connect(self._show_column_settings)
+        filter_layout.addWidget(self.column_settings_btn)
+        
         # 添加一键折叠/展开按钮
         self.collapse_all_btn = QPushButton("一键折叠")
         self.collapse_all_btn.clicked.connect(self._on_collapse_all)
@@ -98,11 +113,6 @@ class ScriptBrowser(QWidget):
         self.expand_all_btn = QPushButton("一键展开")
         self.expand_all_btn.clicked.connect(self._on_expand_all)
         filter_layout.addWidget(self.expand_all_btn)
-        
-        # 添加列显示设置按钮
-        self.column_settings_btn = QPushButton("列设置")
-        self.column_settings_btn.clicked.connect(self._show_column_settings)
-        filter_layout.addWidget(self.column_settings_btn)
         
         layout.addLayout(filter_layout)
         
@@ -149,71 +159,139 @@ class ScriptBrowser(QWidget):
         
         button_layout.addStretch()
         
+        # "添加路径"按钮已移到上方过滤器布局中
+        
+        self.add_to_queue_btn = QPushButton("添加到执行列表 →")
+        self.add_to_queue_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2196F3;
+                color: white;
+                font-weight: bold;
+                padding: 5px 15px;
+            }
+            QPushButton:hover {
+                background-color: #0b7dda;
+            }
+        """)
+        self.add_to_queue_btn.clicked.connect(self._on_add_to_queue)
+        button_layout.addWidget(self.add_to_queue_btn)
+        
         self.save_suite_btn = QPushButton("保存为方案")
         self.save_suite_btn.clicked.connect(self._on_save_suite)
         button_layout.addWidget(self.save_suite_btn)
         
         layout.addLayout(button_layout)
+        
+        # 自定义路径列表
+        self._custom_paths = []  # 存储用户添加的自定义路径
     
     def _load_scripts(self):
         """加载脚本列表"""
         try:
-            # 从配置获取脚本根目录
-            root_path = self.config_manager.get('scripts.root_path', 'TestScripts')
-            self._root_path = root_path
+            # 不再自动加载TestScripts目录
+            # 用户需要手动添加路径
+            self._root_path = None
             
-            if not os.path.exists(root_path):
-                self.logger.warning(f"Script root path not found: {root_path}")
-                return
+            all_scripts = []
             
-            # 扫描脚本
-            result = self.script_service.scan_and_load_scripts(root_path)
+            # 只加载自定义路径的脚本
+            for custom_path in self._custom_paths:
+                if os.path.isfile(custom_path):
+                    # 单个文件
+                    try:
+                        script_info = self.script_service.script_manager.get_script_info(custom_path)
+                        all_scripts.append(script_info)
+                    except Exception as e:
+                        self.logger.warning(f"Failed to load custom script {custom_path}: {e}")
+                elif os.path.isdir(custom_path):
+                    # 文件夹
+                    result = self.script_service.scan_and_load_scripts(custom_path)
+                    if result['success']:
+                        all_scripts.extend(result['scripts'])
             
-            if result['success']:
-                self._scripts = result['scripts']
-                self._filtered_scripts = self._scripts.copy()
-                
-                # 更新分类下拉框
-                categories = self.script_service.get_categories()
-                self.category_combo.clear()
-                self.category_combo.addItem("全部")
-                self.category_combo.addItems(categories)
-                
-                # 更新树形控件
-                self._update_tree()
-                
-                # 更新统计信息
-                self._update_stats()
-                
-                # 加载方案列表
-                self._load_suites()
-                
-                self.logger.info(f"Loaded {len(self._scripts)} scripts")
-            else:
-                error = result.get('error', 'Unknown error')
-                self.logger.error(f"Failed to load scripts: {error}")
-                QMessageBox.warning(self, "警告", f"加载脚本失败: {error}")
+            self._scripts = all_scripts
+            self._filtered_scripts = self._scripts.copy()
+            
+            # 更新分类下拉框
+            categories = self.script_service.get_categories()
+            self.category_combo.clear()
+            self.category_combo.addItem("全部")
+            self.category_combo.addItems(categories)
+            
+            # 更新树形控件
+            self._update_tree()
+            
+            # 更新统计信息
+            self._update_stats()
+            
+            # 加载方案列表
+            self._load_suites()
+            
+            self.logger.info(f"Loaded {len(self._scripts)} scripts (including {len(self._custom_paths)} custom paths)")
         
         except Exception as e:
             self.logger.error(f"Error loading scripts: {e}")
             QMessageBox.critical(self, "错误", f"加载脚本时出错: {e}")
     
     def _update_tree(self):
-        """更新树形控件 - 使用文件夹层级结构"""
+        """更新树形控件 - 直接从脚本列表构建（优化版）"""
         # 暂时断开信号，避免在批量更新时触发
         self.tree_widget.itemChanged.disconnect(self._on_item_checked)
         
-        self.tree_widget.clear()
+        # 禁用UI更新，批量操作完成后再刷新
+        self.tree_widget.setUpdatesEnabled(False)
         
-        # 获取脚本树形结构
-        if self._root_path:
-            tree_data = self.script_service.get_script_tree(self._root_path)
+        try:
+            self.tree_widget.clear()
             
-            # 递归构建树形控件
-            self._build_tree_recursive(tree_data, self.tree_widget)
+            # 如果没有脚本，直接返回
+            if not self._filtered_scripts:
+                return
+            
+            # 按路径分组脚本
+            folder_map = {}
+            
+            for script in self._filtered_scripts:
+                script_path = script['path']
+                
+                # 获取文件夹路径
+                folder = os.path.dirname(script_path)
+                
+                if folder not in folder_map:
+                    folder_map[folder] = []
+                folder_map[folder].append(script)
+            
+            # 构建树形结构
+            for folder, scripts in sorted(folder_map.items()):
+                # 创建文件夹节点
+                folder_item = QTreeWidgetItem(self.tree_widget)
+                folder_name = os.path.basename(folder) if folder else "根目录"
+                folder_item.setText(0, f"📁 {folder_name} ({len(scripts)})")
+                folder_item.setText(1, folder)
+                folder_item.setExpanded(True)
+                
+                # 文件夹节点添加复选框（三态）
+                folder_item.setFlags(folder_item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsTristate)
+                folder_item.setCheckState(0, Qt.Unchecked)
+                
+                # 添加脚本节点
+                for script in sorted(scripts, key=lambda s: s['name']):
+                    script_item = QTreeWidgetItem(folder_item)
+                    script_item.setText(0, f"📄 {script['name']}")
+                    script_item.setText(1, script['path'])
+                    script_item.setText(2, script.get('status', 'idle'))
+                    script_item.setData(0, Qt.UserRole, script)
+                    
+                    # 脚本节点添加复选框
+                    script_item.setFlags(script_item.flags() | Qt.ItemIsUserCheckable)
+                    script_item.setCheckState(0, Qt.Unchecked)
         
-        # 重新连接信号
-        self.tree_widget.itemChanged.connect(self._on_item_checked)
+        finally:
+            # 恢复UI更新
+            self.tree_widget.setUpdatesEnabled(True)
+            
+            # 重新连接信号
+            self.tree_widget.itemChanged.connect(self._on_item_checked)
     
     def _build_tree_recursive(self, node_data, parent_item):
         """递归构建树形结构
@@ -430,31 +508,56 @@ class ScriptBrowser(QWidget):
             self.logger.info(f"Double clicked: {script['path']}")
     
     def _on_select_all(self):
-        """全选"""
-        self._set_all_check_state(Qt.Checked)
+        """全选（优化版）"""
+        # 暂时断开信号，避免每次状态改变都触发
+        self.tree_widget.itemChanged.disconnect(self._on_item_checked)
+        self.tree_widget.setUpdatesEnabled(False)
+        
+        try:
+            self._set_all_check_state(Qt.Checked)
+        finally:
+            self.tree_widget.setUpdatesEnabled(True)
+            self.tree_widget.itemChanged.connect(self._on_item_checked)
     
     def _on_deselect_all(self):
-        """全不选"""
-        self._set_all_check_state(Qt.Unchecked)
+        """全不选（优化版）"""
+        # 暂时断开信号，避免每次状态改变都触发
+        self.tree_widget.itemChanged.disconnect(self._on_item_checked)
+        self.tree_widget.setUpdatesEnabled(False)
+        
+        try:
+            self._set_all_check_state(Qt.Unchecked)
+        finally:
+            self.tree_widget.setUpdatesEnabled(True)
+            self.tree_widget.itemChanged.connect(self._on_item_checked)
     
     def _on_invert_selection(self):
-        """反选（递归处理）"""
-        def invert_recursive(item):
-            for i in range(item.childCount()):
-                child = item.child(i)
-                script = child.data(0, Qt.UserRole)
-                
-                # 只反转脚本节点
-                if script:
-                    current_state = child.checkState(0)
-                    new_state = Qt.Unchecked if current_state == Qt.Checked else Qt.Checked
-                    child.setCheckState(0, new_state)
-                
-                # 递归处理子节点
-                invert_recursive(child)
+        """反选（递归处理 - 优化版）"""
+        # 暂时断开信号，避免每次状态改变都触发
+        self.tree_widget.itemChanged.disconnect(self._on_item_checked)
+        self.tree_widget.setUpdatesEnabled(False)
         
-        root = self.tree_widget.invisibleRootItem()
-        invert_recursive(root)
+        try:
+            def invert_recursive(item):
+                for i in range(item.childCount()):
+                    child = item.child(i)
+                    script = child.data(0, Qt.UserRole)
+                    
+                    # 只反转脚本节点
+                    if script:
+                        current_state = child.checkState(0)
+                        new_state = Qt.Unchecked if current_state == Qt.Checked else Qt.Checked
+                        child.setCheckState(0, new_state)
+                    
+                    # 递归处理子节点
+                    invert_recursive(child)
+            
+            root = self.tree_widget.invisibleRootItem()
+            invert_recursive(root)
+        
+        finally:
+            self.tree_widget.setUpdatesEnabled(True)
+            self.tree_widget.itemChanged.connect(self._on_item_checked)
     
     def _set_all_check_state(self, state):
         """设置所有脚本的复选框状态（递归处理）"""
@@ -580,27 +683,36 @@ class ScriptBrowser(QWidget):
         return self._current_suite
     
     def _select_scripts_by_paths(self, paths):
-        """根据路径选中脚本（递归处理）
+        """根据路径选中脚本（递归处理 - 优化版）
         
         Args:
             paths: 脚本路径列表
         """
-        path_set = set(paths)
+        # 暂时断开信号，避免每次状态改变都触发
+        self.tree_widget.itemChanged.disconnect(self._on_item_checked)
+        self.tree_widget.setUpdatesEnabled(False)
         
-        def select_recursive(item):
-            for i in range(item.childCount()):
-                child = item.child(i)
-                script = child.data(0, Qt.UserRole)
-                
-                # 如果是脚本节点且在路径集合中
-                if script and script['path'] in path_set:
-                    child.setCheckState(0, Qt.Checked)
-                
-                # 递归处理子节点
-                select_recursive(child)
+        try:
+            path_set = set(paths)
+            
+            def select_recursive(item):
+                for i in range(item.childCount()):
+                    child = item.child(i)
+                    script = child.data(0, Qt.UserRole)
+                    
+                    # 如果是脚本节点且在路径集合中
+                    if script and script['path'] in path_set:
+                        child.setCheckState(0, Qt.Checked)
+                    
+                    # 递归处理子节点
+                    select_recursive(child)
+            
+            root = self.tree_widget.invisibleRootItem()
+            select_recursive(root)
         
-        root = self.tree_widget.invisibleRootItem()
-        select_recursive(root)
+        finally:
+            self.tree_widget.setUpdatesEnabled(True)
+            self.tree_widget.itemChanged.connect(self._on_item_checked)
     
     def _on_save_suite(self):
         """保存为方案"""
@@ -672,3 +784,218 @@ class ScriptBrowser(QWidget):
             当前方案信息，如果没有选择则返回None
         """
         return self._current_suite
+    
+    def _on_add_custom_path(self):
+        """添加自定义脚本路径"""
+        from PyQt5.QtWidgets import QFileDialog, QInputDialog
+        from .script_selection_dialog import ScriptSelectionDialog
+        
+        # 询问用户要添加文件还是文件夹
+        items = ["添加单个脚本文件", "添加整个文件夹"]
+        item, ok = QInputDialog.getItem(
+            self, "选择添加类型",
+            "请选择要添加的类型:",
+            items, 0, False
+        )
+        
+        if not ok:
+            return
+        
+        if item == "添加单个脚本文件":
+            # 选择单个Python文件
+            file_path, _ = QFileDialog.getOpenFileName(
+                self,
+                "选择Python脚本文件",
+                "",
+                "Python Files (*.py);;All Files (*)"
+            )
+            
+            if file_path:
+                self._add_custom_script(file_path)
+        
+        else:
+            # 选择文件夹
+            folder_path = QFileDialog.getExistingDirectory(
+                self,
+                "选择脚本文件夹",
+                ""
+            )
+            
+            if folder_path:
+                self._add_custom_folder_with_selection(folder_path)
+    
+    def _add_custom_script(self, script_path):
+        """添加单个自定义脚本
+        
+        Args:
+            script_path: 脚本文件路径
+        """
+        try:
+            # 检查是否已添加
+            if script_path in self._custom_paths:
+                QMessageBox.information(self, "提示", "该脚本已经添加过了")
+                return
+            
+            # 验证脚本
+            if not self.script_manager.validate_script(script_path):
+                QMessageBox.warning(self, "警告", "无效的Python脚本文件")
+                return
+            
+            # 添加到自定义路径列表
+            self._custom_paths.append(script_path)
+            
+            # 获取脚本信息并添加到缓存
+            script_info = self.script_service.script_manager.get_script_info(script_path)
+            self._scripts.append(script_info)
+            self._filtered_scripts.append(script_info)
+            
+            # 更新树形控件
+            self._update_tree()
+            self._update_stats()
+            
+            self.logger.info(f"Added custom script: {script_path}")
+            QMessageBox.information(
+                self, "成功",
+                f"已添加脚本:\n{os.path.basename(script_path)}"
+            )
+        
+        except Exception as e:
+            self.logger.error(f"Error adding custom script: {e}")
+            QMessageBox.critical(self, "错误", f"添加脚本失败: {e}")
+    
+    def _add_custom_folder_with_selection(self, folder_path):
+        """添加自定义文件夹 - 弹出对话框让用户选择脚本（异步优化版）
+        
+        Args:
+            folder_path: 文件夹路径
+        """
+        try:
+            from .script_selection_dialog import ScriptSelectionDialog
+            from PyQt5.QtWidgets import QProgressDialog
+            from PyQt5.QtCore import QThread, pyqtSignal
+            
+            # 检查是否已添加
+            if folder_path in self._custom_paths:
+                QMessageBox.information(self, "提示", "该文件夹已经添加过了")
+                return
+            
+            # 创建进度对话框
+            progress = QProgressDialog("正在扫描文件夹...", "取消", 0, 0, self)
+            progress.setWindowTitle("扫描中")
+            progress.setWindowModality(Qt.WindowModal)
+            progress.setMinimumDuration(500)  # 500ms后才显示
+            progress.setValue(0)
+            
+            # 使用线程扫描文件夹（避免UI卡顿）
+            class ScanThread(QThread):
+                finished = pyqtSignal(dict)
+                error = pyqtSignal(str)
+                
+                def __init__(self, service, path):
+                    super().__init__()
+                    self.service = service
+                    self.path = path
+                
+                def run(self):
+                    try:
+                        result = self.service.scan_and_load_scripts(self.path)
+                        self.finished.emit(result)
+                    except Exception as e:
+                        self.error.emit(str(e))
+            
+            # 保持线程引用，防止被垃圾回收
+            self._scan_thread = ScanThread(self.script_service, folder_path)
+            
+            # 扫描完成后的处理
+            def on_scan_finished(result):
+                try:
+                    progress.close()
+                    
+                    if not result['success']:
+                        QMessageBox.warning(self, "警告", f"扫描文件夹失败: {result.get('error', '')}")
+                        return
+                    
+                    all_scripts = result['scripts']
+                    if not all_scripts:
+                        QMessageBox.information(self, "提示", "该文件夹中没有找到Python脚本")
+                        return
+                    
+                    # 显示脚本选择对话框
+                    dialog = ScriptSelectionDialog(all_scripts, folder_path, self)
+                    if dialog.exec_() != dialog.Accepted:
+                        return
+                    
+                    # 获取用户选择的脚本
+                    selected_scripts = dialog.get_selected_scripts()
+                    if not selected_scripts:
+                        return
+                    
+                    # 添加到自定义路径列表
+                    self._custom_paths.append(folder_path)
+                    
+                    # 使用集合优化查找性能
+                    existing_paths = {s['path'] for s in self._scripts}
+                    
+                    # 添加选中的脚本到列表
+                    for script in selected_scripts:
+                        if script['path'] not in existing_paths:
+                            self._scripts.append(script)
+                            self._filtered_scripts.append(script)
+                            existing_paths.add(script['path'])
+                    
+                    # 更新树形控件
+                    self._update_tree()
+                    self._update_stats()
+                    
+                    self.logger.info(f"Added {len(selected_scripts)} scripts from folder: {folder_path}")
+                    QMessageBox.information(
+                        self, "成功",
+                        f"已从文件夹添加 {len(selected_scripts)} 个脚本:\n{os.path.basename(folder_path)}"
+                    )
+                except Exception as e:
+                    self.logger.error(f"Error in on_scan_finished: {e}")
+                    QMessageBox.critical(self, "错误", f"处理扫描结果时出错: {e}")
+                finally:
+                    # 清理线程引用
+                    self._scan_thread = None
+            
+            def on_scan_error(error_msg):
+                try:
+                    progress.close()
+                    QMessageBox.critical(self, "错误", f"扫描文件夹时出错: {error_msg}")
+                except Exception as e:
+                    self.logger.error(f"Error in on_scan_error: {e}")
+                finally:
+                    # 清理线程引用
+                    self._scan_thread = None
+            
+            # 连接信号
+            self._scan_thread.finished.connect(on_scan_finished)
+            self._scan_thread.error.connect(on_scan_error)
+            
+            # 启动线程
+            self._scan_thread.start()
+        
+        except Exception as e:
+            self.logger.error(f"Error adding custom folder: {e}")
+            QMessageBox.critical(self, "错误", f"添加文件夹失败: {e}")
+    
+    def _on_add_to_queue(self):
+        """添加选中的脚本到执行队列"""
+        selected_scripts = self.get_selected_scripts()
+        
+        if not selected_scripts:
+            QMessageBox.warning(self, "警告", "请先选择要添加的脚本")
+            return
+        
+        # 发出信号，由主窗口处理
+        # 获取脚本信息
+        script_info_list = []
+        for path in selected_scripts:
+            info = self._get_script_info_by_path(path)
+            if info:
+                script_info_list.append(info)
+        
+        # 触发信号
+        if hasattr(self, 'add_to_queue_requested'):
+            self.add_to_queue_requested.emit(selected_scripts, script_info_list)

@@ -3,6 +3,7 @@
 应用程序的主界面窗口。
 """
 
+import os
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QTabWidget, QStatusBar, QMenuBar,
@@ -13,6 +14,7 @@ from PyQt5.QtGui import QIcon
 
 from .script_browser import ScriptBrowser
 from .execution_panel import ExecutionPanel
+from .execution_queue_panel import ExecutionQueuePanel
 from .result_viewer import ResultViewer
 from .dashboard import Dashboard
 from .performance_panel import PerformancePanel
@@ -56,6 +58,9 @@ class MainWindow(QMainWindow):
         self.is_super_admin = False
         self.can_view_results = False
         
+        # 保存分割器引用
+        self.main_splitter = None
+        
         self._init_ui()
         self._create_menu_bar()
         self._create_tool_bar()
@@ -66,30 +71,57 @@ class MainWindow(QMainWindow):
         self._disable_all_functions()
         
         self.logger.info("Main window initialized")
-        QTimer.singleShot(3000, lambda: show_update_dialog(self, force_check=False))
+        # 移除自动更新检查，改为手动检查
+        # QTimer.singleShot(3000, lambda: show_update_dialog(self, force_check=False))
     
     def _init_ui(self):
         """初始化UI"""
         from version import get_version_string
         self.setWindowTitle(f"Python脚本批量执行工具 v{get_version_string()}")
-        self.setGeometry(100, 100, 1400, 900)
+        # 调整窗口大小：宽度改为800，适应小屏幕显示器
+        self.setGeometry(100, 100, 800, 700)
         
-        # 创建中央部件
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
+        # 设置窗口图标
+        icon_path = os.path.join('resources', 'app图标.png')
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
+            self.logger.info(f"Window icon loaded from: {icon_path}")
+        else:
+            self.logger.warning(f"Window icon not found: {icon_path}")
         
-        # 创建主布局
-        main_layout = QHBoxLayout(central_widget)
+        # 创建两栏分割器（可拖动）
+        self.main_splitter = QSplitter(Qt.Horizontal, self)
         
-        # 创建分割器
-        splitter = QSplitter(Qt.Horizontal)
+        # 关键设置：防止子控件被完全折叠
+        self.main_splitter.setChildrenCollapsible(False)
         
-        # 左侧：脚本浏览器
+        # 设置分割器手柄宽度，使其更容易抓取
+        self.main_splitter.setHandleWidth(6)
+        
+        # 设置分割器样式，使手柄更明显
+        self.main_splitter.setStyleSheet("""
+            QSplitter::handle {
+                background-color: #d0d0d0;
+                border: 1px solid #a0a0a0;
+            }
+            QSplitter::handle:hover {
+                background-color: #b0b0b0;
+            }
+            QSplitter::handle:pressed {
+                background-color: #909090;
+            }
+        """)
+        
+        # 左侧：脚本浏览器（临时脚本池）
         self.script_browser = ScriptBrowser(self.container)
-        splitter.addWidget(self.script_browser)
+        self.main_splitter.addWidget(self.script_browser)
         
         # 右侧：标签页
         self.tab_widget = QTabWidget()
+        
+        # 执行队列面板（作为第一个标签页）
+        self.execution_queue = ExecutionQueuePanel()
+        self.queue_tab_index = self.tab_widget.addTab(self.execution_queue, "执行队列")
         
         # 执行控制面板（所有用户可见）
         self.execution_panel = ExecutionPanel(self.container)
@@ -119,13 +151,20 @@ class MainWindow(QMainWindow):
         # self.plugin_panel = PluginPanel(self, self.plugin_manager)
         # self.tab_widget.addTab(self.plugin_panel, "插件管理")
         
-        splitter.addWidget(self.tab_widget)
+        self.main_splitter.addWidget(self.tab_widget)
         
-        # 设置分割器比例
-        splitter.setStretchFactor(0, 1)  # 左侧占1份
-        splitter.setStretchFactor(1, 3)  # 右侧占3份
+        # 设置分割器初始大小（像素）- 两栏布局
+        # 总宽度800，按比例分配：左250 + 右550 = 800
+        self.main_splitter.setSizes([250, 550])
         
-        main_layout.addWidget(splitter)
+        # 设置拉伸因子，使右侧面板在窗口调整大小时获得更多空间
+        self.main_splitter.setStretchFactor(0, 1)  # 左侧：适度拉伸
+        self.main_splitter.setStretchFactor(1, 3)  # 右侧：主要拉伸区域
+        
+        # 直接将分割器设为中央部件
+        self.setCentralWidget(self.main_splitter)
+        
+        self.logger.info("UI initialized with two-column layout (execution queue moved to tab)")
     
     def _create_menu_bar(self):
         """创建菜单栏"""
@@ -219,6 +258,13 @@ class MainWindow(QMainWindow):
         # 帮助菜单
         help_menu = menubar.addMenu("帮助(&H)")
         
+        check_update_action = QAction("检查更新(&U)", self)
+        check_update_action.setShortcut("F12")
+        check_update_action.triggered.connect(self._on_check_update)
+        help_menu.addAction(check_update_action)
+        
+        help_menu.addSeparator()
+        
         about_action = QAction("关于(&A)", self)
         about_action.triggered.connect(self._on_about)
         help_menu.addAction(about_action)
@@ -294,6 +340,11 @@ class MainWindow(QMainWindow):
         # 脚本浏览器信号
         self.script_browser.script_selected.connect(self._on_script_selected)
         self.script_browser.scripts_selected.connect(self._on_scripts_selected)
+        self.script_browser.add_to_queue_requested.connect(self._on_add_to_queue)
+        
+        # 执行队列信号
+        self.execution_queue.execute_requested.connect(self._on_execute_queue)
+        self.execution_queue.queue_changed.connect(self._on_queue_changed)
         
         # 执行面板信号
         self.execution_panel.execution_started.connect(self._on_execution_started)
@@ -315,47 +366,51 @@ class MainWindow(QMainWindow):
             self.logger.error(f"Failed to refresh scripts: {e}")
             QMessageBox.critical(self, "错误", f"刷新脚本失败: {e}")
     
-    def _on_start_execution(self):
-        """开始执行"""
-        selected_scripts = self.script_browser.get_selected_scripts()
+    def _on_add_to_queue(self, script_paths, script_info_list):
+        """将脚本添加到执行队列
         
-        if not selected_scripts:
-            QMessageBox.warning(self, "警告", "请先选择要执行的脚本")
+        Args:
+            script_paths: 脚本路径列表
+            script_info_list: 脚本信息列表
+        """
+        self.execution_queue.add_scripts(script_paths, script_info_list)
+        self.logger.info(f"Added {len(script_paths)} scripts to execution queue")
+    
+    def _on_queue_changed(self, queue):
+        """执行队列改变
+        
+        Args:
+            queue: 新的队列（脚本路径列表）
+        """
+        self.logger.info(f"Execution queue changed, now has {len(queue)} scripts")
+    
+    def _on_execute_queue(self, script_paths):
+        """执行队列中的脚本
+        
+        Args:
+            script_paths: 要执行的脚本路径列表
+        """
+        if not script_paths:
             return
         
-        # 详细日志：显示选中的脚本
-        self.logger.info(f"Selected {len(selected_scripts)} scripts from browser:")
-        for i, script in enumerate(selected_scripts, 1):
-            self.logger.info(f"  {i}. {script}")
+        self.logger.info(f"Executing {len(script_paths)} scripts from queue")
         
-        # 检查重复
-        unique_scripts = list(dict.fromkeys(selected_scripts))
-        if len(unique_scripts) != len(selected_scripts):
-            duplicates = len(selected_scripts) - len(unique_scripts)
-            self.logger.warning(f"Found {duplicates} duplicate scripts in selection!")
-            # 显示重复的脚本
-            from collections import Counter
-            counts = Counter(selected_scripts)
-            for script, count in counts.items():
-                if count > 1:
-                    self.logger.warning(f"  Duplicate: {script} (appears {count} times)")
-        
-        # 获取当前测试方案并传递给执行面板
-        current_suite = self.script_browser.get_current_suite()
-        if current_suite:
-            self.execution_panel.set_current_suite(current_suite)
-            self.logger.info(f"Executing with suite: {current_suite.get('name')} (ID: {current_suite.get('id')})")
-        else:
-            self.execution_panel.set_current_suite(None)
-            self.logger.info("Executing without suite")
-        
-        # 切换到执行控制面板
-        self.tab_widget.setCurrentIndex(0)
+        # 切换到执行控制面板（现在是第二个标签页，索引为1）
+        self.tab_widget.setCurrentIndex(1)
         
         # 开始执行
-        self.execution_panel.start_execution(selected_scripts)
+        self.execution_panel.start_execution(script_paths)
+    
+    def _on_start_execution(self):
+        """开始执行 - 从执行队列执行"""
+        queue = self.execution_queue.get_queue()
         
-        self.logger.info(f"Execution started for {len(selected_scripts)} scripts")
+        if not queue:
+            QMessageBox.warning(self, "警告", "执行队列为空，请先添加脚本到执行列表")
+            return
+        
+        # 执行队列中的脚本
+        self._on_execute_queue(queue)
     
     def _on_stop_execution(self):
         """停止执行"""
@@ -431,13 +486,32 @@ class MainWindow(QMainWindow):
         """打开设置对话框"""
         QMessageBox.information(self, "设置", "设置功能开发中...")
     
+    def _on_check_update(self):
+        """手动检查更新"""
+        try:
+            self.logger.info("Manual update check requested")
+            show_update_dialog(self, force_check=True)
+        except Exception as e:
+            self.logger.error(f"Error checking for updates: {e}")
+            QMessageBox.critical(self, "错误", f"检查更新时出错: {e}")
+    
     def _on_about(self):
         """显示关于对话框"""
-        about_text = """
+        from version import get_version_string
+        about_text = f"""
         <h2>Python脚本批量执行工具</h2>
-        <p>版本: 1.0.0</p>
+        <p>版本: {get_version_string()}</p>
         <p>一款用于批量管理和执行Python测试脚本的桌面应用程序。</p>
-        <p>Copyright © 2024</p>
+        <p>Copyright © 2024-2025</p>
+        <br>
+        <p><b>功能特性：</b></p>
+        <ul>
+        <li>支持批量执行Python脚本</li>
+        <li>支持添加任意位置的脚本文件或文件夹</li>
+        <li>实时监控执行过程和结果</li>
+        <li>测试方案管理</li>
+        <li>用户权限管理</li>
+        </ul>
         """
         QMessageBox.about(self, "关于", about_text)
     

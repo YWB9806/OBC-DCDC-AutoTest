@@ -234,7 +234,7 @@ class ScriptBrowser(QWidget):
             QMessageBox.critical(self, "错误", f"加载脚本时出错: {e}")
     
     def _update_tree(self):
-        """更新树形控件 - 直接从脚本列表构建（优化版）"""
+        """更新树形控件 - 构建完整的层级目录结构（优化版）"""
         # 暂时断开信号，避免在批量更新时触发
         self.tree_widget.itemChanged.disconnect(self._on_item_checked)
         
@@ -248,43 +248,121 @@ class ScriptBrowser(QWidget):
             if not self._filtered_scripts:
                 return
             
-            # 按路径分组脚本
-            folder_map = {}
+            # 找到所有自定义路径的公共根目录
+            base_paths = {}  # {base_path: scripts}
+            for custom_path in self._custom_paths:
+                if os.path.isdir(custom_path):
+                    base_paths[custom_path] = []
             
+            # 将脚本分配到对应的基础路径
             for script in self._filtered_scripts:
                 script_path = script['path']
-                
-                # 获取文件夹路径
-                folder = os.path.dirname(script_path)
-                
-                if folder not in folder_map:
-                    folder_map[folder] = []
-                folder_map[folder].append(script)
+                # 找到脚本所属的基础路径
+                for base_path in base_paths:
+                    if script_path.startswith(base_path):
+                        base_paths[base_path].append(script)
+                        break
             
-            # 构建树形结构
-            for folder, scripts in sorted(folder_map.items()):
-                # 创建文件夹节点
-                folder_item = QTreeWidgetItem(self.tree_widget)
-                folder_name = os.path.basename(folder) if folder else "根目录"
-                folder_item.setText(0, f"📁 {folder_name} ({len(scripts)})")
-                folder_item.setText(1, folder)
-                folder_item.setExpanded(True)
+            # 为每个基础路径构建目录树
+            for base_path, scripts in base_paths.items():
+                if not scripts:
+                    continue
                 
-                # 文件夹节点添加复选框（三态）
-                folder_item.setFlags(folder_item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsTristate)
-                folder_item.setCheckState(0, Qt.Unchecked)
+                # 构建该基础路径下的目录树
+                root_nodes = {}  # 存储所有目录节点 {relative_path: tree_item}
                 
-                # 添加脚本节点
-                for script in sorted(scripts, key=lambda s: s['name']):
-                    script_item = QTreeWidgetItem(folder_item)
-                    script_item.setText(0, f"📄 {script['name']}")
-                    script_item.setText(1, script['path'])
-                    script_item.setText(2, script.get('status', 'idle'))
-                    script_item.setData(0, Qt.UserRole, script)
+                for script in scripts:
+                    script_path = script['path']
                     
-                    # 脚本节点添加复选框
-                    script_item.setFlags(script_item.flags() | Qt.ItemIsUserCheckable)
-                    script_item.setCheckState(0, Qt.Unchecked)
+                    # 获取相对于基础路径的相对路径
+                    try:
+                        rel_path = os.path.relpath(script_path, base_path)
+                    except ValueError:
+                        # 如果无法计算相对路径，使用绝对路径
+                        rel_path = script_path
+                    
+                    # 获取脚本的目录部分
+                    dir_path = os.path.dirname(rel_path)
+                    
+                    # 如果脚本就在基础路径下（没有子目录）
+                    if not dir_path or dir_path == '.':
+                        # 直接在根节点下创建脚本
+                        base_name = os.path.basename(base_path)
+                        if base_path not in root_nodes:
+                            base_item = QTreeWidgetItem(self.tree_widget)
+                            base_item.setText(0, f"📁 {base_name}")
+                            base_item.setText(1, base_path)
+                            base_item.setExpanded(True)
+                            base_item.setFlags(base_item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsTristate)
+                            base_item.setCheckState(0, Qt.Unchecked)
+                            root_nodes[base_path] = base_item
+                        
+                        parent_item = root_nodes[base_path]
+                    else:
+                        # 分割相对路径为各级目录
+                        path_parts = dir_path.split(os.sep)
+                        
+                        # 递归创建目录节点
+                        parent_item = None
+                        current_rel_path = ""
+                        
+                        # 首先创建基础路径节点
+                        base_name = os.path.basename(base_path)
+                        if base_path not in root_nodes:
+                            base_item = QTreeWidgetItem(self.tree_widget)
+                            base_item.setText(0, f"📁 {base_name}")
+                            base_item.setText(1, base_path)
+                            base_item.setExpanded(True)
+                            base_item.setFlags(base_item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsTristate)
+                            base_item.setCheckState(0, Qt.Unchecked)
+                            root_nodes[base_path] = base_item
+                        
+                        parent_item = root_nodes[base_path]
+                        
+                        # 然后创建子目录节点
+                        for dir_name in path_parts:
+                            if not dir_name or dir_name == '.':
+                                continue
+                            
+                            if current_rel_path:
+                                current_rel_path = os.path.join(current_rel_path, dir_name)
+                            else:
+                                current_rel_path = dir_name
+                            
+                            full_path = os.path.join(base_path, current_rel_path)
+                            
+                            # 检查该路径的节点是否已创建
+                            if full_path in root_nodes:
+                                parent_item = root_nodes[full_path]
+                            else:
+                                # 创建新的目录节点
+                                folder_item = QTreeWidgetItem(parent_item)
+                                folder_item.setText(0, f"📁 {dir_name}")
+                                folder_item.setText(1, full_path)
+                                folder_item.setExpanded(False)  # 默认折叠，提高性能
+                                
+                                # 文件夹节点添加复选框（三态）
+                                folder_item.setFlags(folder_item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsTristate)
+                                folder_item.setCheckState(0, Qt.Unchecked)
+                                
+                                # 缓存节点
+                                root_nodes[full_path] = folder_item
+                                parent_item = folder_item
+                    
+                    # 在最后一级目录下添加脚本节点
+                    if parent_item is not None:
+                        script_item = QTreeWidgetItem(parent_item)
+                        script_item.setText(0, f"📄 {script['name']}")
+                        script_item.setText(1, script['path'])
+                        script_item.setText(2, script.get('status', 'idle'))
+                        script_item.setData(0, Qt.UserRole, script)
+                        
+                        # 脚本节点添加复选框
+                        script_item.setFlags(script_item.flags() | Qt.ItemIsUserCheckable)
+                        script_item.setCheckState(0, Qt.Unchecked)
+            
+            # 更新所有文件夹节点的脚本计数
+            self._update_folder_counts(self.tree_widget.invisibleRootItem())
         
         finally:
             # 恢复UI更新
@@ -292,6 +370,53 @@ class ScriptBrowser(QWidget):
             
             # 重新连接信号
             self.tree_widget.itemChanged.connect(self._on_item_checked)
+    
+    def _update_folder_counts(self, parent_item):
+        """递归更新文件夹节点的脚本计数
+        
+        Args:
+            parent_item: 父节点
+        """
+        for i in range(parent_item.childCount()):
+            child = parent_item.child(i)
+            
+            # 如果是文件夹节点（有子节点）
+            if child.childCount() > 0:
+                # 递归更新子文件夹
+                self._update_folder_counts(child)
+                
+                # 统计该文件夹下的脚本数量
+                script_count = self._count_scripts_in_item(child)
+                
+                # 更新文件夹显示名称
+                folder_name = child.text(0)
+                if "📁" in folder_name:
+                    # 移除旧的计数
+                    base_name = folder_name.split("(")[0].strip()
+                    child.setText(0, f"{base_name} ({script_count})")
+    
+    def _count_scripts_in_item(self, item):
+        """递归统计节点下的脚本数量
+        
+        Args:
+            item: 树节点
+            
+        Returns:
+            脚本数量
+        """
+        count = 0
+        for i in range(item.childCount()):
+            child = item.child(i)
+            script = child.data(0, Qt.UserRole)
+            
+            if script:
+                # 是脚本节点
+                count += 1
+            else:
+                # 是文件夹节点，递归统计
+                count += self._count_scripts_in_item(child)
+        
+        return count
     
     def _build_tree_recursive(self, node_data, parent_item):
         """递归构建树形结构

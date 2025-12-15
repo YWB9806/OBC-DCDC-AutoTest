@@ -56,7 +56,8 @@ class ResultViewer(QWidget):
         
         row1_layout.addWidget(QLabel("开始日期:"))
         self.start_date = QDateEdit()
-        self.start_date.setDate(QDate.currentDate().addDays(-30))
+        # 修复：默认显示今天的数据，而不是30天前
+        self.start_date.setDate(QDate.currentDate())
         self.start_date.setCalendarPopup(True)
         # 移除自动触发
         # self.start_date.dateChanged.connect(self._on_filter_changed)

@@ -780,6 +780,24 @@ class ScriptBrowser(QWidget):
                 import json
                 script_paths = json.loads(script_paths)
             
+            # 【Bug修复】检查并自动加载缺失的脚本路径
+            # 规范化路径以进行比较（统一使用小写和正斜杠）
+            def normalize_path(p):
+                """规范化路径用于比较"""
+                return os.path.normpath(p).lower().replace('\\', '/')
+            
+            missing_scripts = []
+            loaded_paths = {normalize_path(s['path']) for s in self._scripts}
+            
+            for path in script_paths:
+                normalized_path = normalize_path(path)
+                if normalized_path not in loaded_paths and os.path.exists(path):
+                    missing_scripts.append(path)
+            
+            if missing_scripts:
+                self.logger.info(f"Found {len(missing_scripts)} missing scripts, auto-loading their directories...")
+                self._auto_load_missing_scripts(missing_scripts)
+            
             # 取消所有选择
             self._set_all_check_state(Qt.Unchecked)
             
@@ -807,6 +825,107 @@ class ScriptBrowser(QWidget):
         """
         return self._current_suite
     
+    def _auto_load_missing_scripts(self, script_paths):
+        """自动加载缺失的脚本（通过扫描其父目录）
+        
+        Args:
+            script_paths: 缺失的脚本路径列表
+        """
+        try:
+            # 收集需要扫描的目录（去重）
+            dirs_to_scan = set()
+            
+            for path in script_paths:
+                if not os.path.isfile(path):
+                    continue
+                
+                # 获取脚本的直接父目录
+                parent_dir = os.path.dirname(path)
+                if not parent_dir or len(parent_dir) <= 3:  # 避免扫描根目录（如 C:/ 或 C:\）
+                    self.logger.warning(f"Skipping root or invalid directory for: {path}")
+                    continue
+                
+                # 尝试找到一个合理的项目根目录
+                # 策略：向上查找，但最多3层，且不超过盘符根目录
+                current_dir = parent_dir
+                project_root = parent_dir
+                max_levels = 3
+                level = 0
+                
+                while level < max_levels and current_dir:
+                    parent = os.path.dirname(current_dir)
+                    
+                    # 停止条件：
+                    # 1. 到达根目录（如 C:\ 或 /）
+                    # 2. 父目录为空或与当前目录相同
+                    # 3. 父目录长度 <= 3（盘符）
+                    if not parent or parent == current_dir or len(parent) <= 3:
+                        break
+                    
+                    # 检查是否已经在custom_paths中
+                    if parent in self._custom_paths:
+                        project_root = parent
+                        break
+                    
+                    # 检查是否是常见的项目根目录标志
+                    # （包含 .git, .vscode, requirements.txt 等）
+                    if any(os.path.exists(os.path.join(parent, marker))
+                           for marker in ['.git', '.vscode', 'requirements.txt', 'setup.py']):
+                        project_root = parent
+                        break
+                    
+                    current_dir = parent
+                    level += 1
+                
+                # 确保不是根目录
+                if project_root and len(project_root) > 3 and project_root not in self._custom_paths:
+                    dirs_to_scan.add(project_root)
+            
+            if not dirs_to_scan:
+                self.logger.info("No valid directories to scan for missing scripts")
+                return
+            
+            self.logger.info(f"Auto-loading {len(dirs_to_scan)} directories for missing scripts: {dirs_to_scan}")
+            
+            # 扫描并加载这些目录
+            for dir_path in dirs_to_scan:
+                try:
+                    if dir_path not in self._custom_paths:
+                        self._custom_paths.append(dir_path)
+                        
+                        # 扫描目录
+                        self.logger.info(f"Scanning directory: {dir_path}")
+                        result = self.script_service.scan_and_load_scripts(dir_path)
+                        
+                        if result['success']:
+                            # 添加脚本到列表
+                            existing_paths = {s['path'] for s in self._scripts}
+                            added_count = 0
+                            
+                            for script in result['scripts']:
+                                if script['path'] not in existing_paths:
+                                    self._scripts.append(script)
+                                    self._filtered_scripts.append(script)
+                                    existing_paths.add(script['path'])
+                                    added_count += 1
+                            
+                            self.logger.info(f"Added {added_count} scripts from {dir_path}")
+                        else:
+                            self.logger.warning(f"Failed to scan {dir_path}: {result.get('error')}")
+                
+                except Exception as e:
+                    self.logger.error(f"Error scanning directory {dir_path}: {e}")
+                    continue
+            
+            # 更新UI
+            self._update_tree()
+            self._update_stats()
+            
+            self.logger.info(f"Auto-load complete. Total scripts: {len(self._scripts)}")
+        
+        except Exception as e:
+            self.logger.error(f"Error auto-loading missing scripts: {e}", exc_info=True)
+    
     def _select_scripts_by_paths(self, paths):
         """根据路径选中脚本（递归处理 - 优化版）
         
@@ -818,16 +937,24 @@ class ScriptBrowser(QWidget):
         self.tree_widget.setUpdatesEnabled(False)
         
         try:
-            path_set = set(paths)
+            # 规范化路径用于比较
+            def normalize_path(p):
+                """规范化路径用于比较"""
+                return os.path.normpath(p).lower().replace('\\', '/')
+            
+            # 创建规范化路径集合
+            normalized_path_set = {normalize_path(p) for p in paths}
             
             def select_recursive(item):
                 for i in range(item.childCount()):
                     child = item.child(i)
                     script = child.data(0, Qt.UserRole)
                     
-                    # 如果是脚本节点且在路径集合中
-                    if script and script['path'] in path_set:
-                        child.setCheckState(0, Qt.Checked)
+                    # 如果是脚本节点且在路径集合中（使用规范化路径比较）
+                    if script:
+                        normalized_script_path = normalize_path(script['path'])
+                        if normalized_script_path in normalized_path_set:
+                            child.setCheckState(0, Qt.Checked)
                     
                     # 递归处理子节点
                     select_recursive(child)
@@ -901,6 +1028,20 @@ class ScriptBrowser(QWidget):
             self._on_suite_changed(index, show_message=False)
             # 重新连接信号
             self.suite_combo.currentIndexChanged.connect(self._on_suite_changed)
+            
+            # 【Bug修复】自动将方案中的脚本添加到执行队列
+            selected_scripts = self.get_selected_scripts()
+            if selected_scripts:
+                # 获取脚本信息
+                script_info_list = []
+                for path in selected_scripts:
+                    info = self._get_script_info_by_path(path)
+                    if info:
+                        script_info_list.append(info)
+                
+                # 触发添加到队列的信号
+                self.add_to_queue_requested.emit(selected_scripts, script_info_list)
+                self.logger.info(f"Auto-added {len(selected_scripts)} scripts from suite '{suite['name']}' to execution queue")
     
     def get_current_suite(self):
         """获取当前选择的测试方案

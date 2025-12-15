@@ -45,8 +45,9 @@ class ExecutionQueuePanel(QWidget):
         title_layout.addStretch()
         layout.addLayout(title_layout)
         
-        # 列表控件
+        # 列表控件 - 启用多选模式
         self.list_widget = QListWidget()
+        self.list_widget.setSelectionMode(QListWidget.ExtendedSelection)  # 支持Ctrl/Shift多选
         self.list_widget.setContextMenuPolicy(Qt.CustomContextMenu)
         self.list_widget.customContextMenuRequested.connect(self._show_context_menu)
         self.list_widget.itemDoubleClicked.connect(self._on_item_double_clicked)
@@ -54,6 +55,10 @@ class ExecutionQueuePanel(QWidget):
         
         # 按钮栏
         button_layout = QHBoxLayout()
+        
+        self.select_all_btn = QPushButton("全选")
+        self.select_all_btn.clicked.connect(self._on_select_all)
+        button_layout.addWidget(self.select_all_btn)
         
         self.move_up_btn = QPushButton("↑ 上移")
         self.move_up_btn.clicked.connect(self._on_move_up)
@@ -63,11 +68,11 @@ class ExecutionQueuePanel(QWidget):
         self.move_down_btn.clicked.connect(self._on_move_down)
         button_layout.addWidget(self.move_down_btn)
         
-        self.remove_btn = QPushButton("移除")
+        self.remove_btn = QPushButton("移除选中")
         self.remove_btn.clicked.connect(self._on_remove)
         button_layout.addWidget(self.remove_btn)
         
-        self.clear_btn = QPushButton("清空")
+        self.clear_btn = QPushButton("清空全部")
         self.clear_btn.clicked.connect(self._on_clear)
         button_layout.addWidget(self.clear_btn)
         
@@ -262,16 +267,35 @@ class ExecutionQueuePanel(QWidget):
         self.queue_changed.emit(self._queue)
     
     def _on_remove(self):
-        """移除选中项"""
-        current_row = self.list_widget.currentRow()
-        if current_row < 0:
+        """移除选中项（支持多选）"""
+        selected_items = self.list_widget.selectedItems()
+        if not selected_items:
+            QMessageBox.warning(self, "提示", "请先选择要移除的脚本")
             return
         
-        path = self._queue[current_row]
-        self._queue.pop(current_row)
+        # 确认删除
+        if len(selected_items) > 1:
+            reply = QMessageBox.question(
+                self, "确认",
+                f"确定要移除选中的 {len(selected_items)} 个脚本吗？",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            if reply != QMessageBox.Yes:
+                return
         
-        if path in self._script_info_map:
-            del self._script_info_map[path]
+        # 收集要移除的路径
+        paths_to_remove = []
+        for item in selected_items:
+            path = item.data(Qt.UserRole)
+            paths_to_remove.append(path)
+        
+        # 批量移除
+        for path in paths_to_remove:
+            if path in self._queue:
+                self._queue.remove(path)
+            if path in self._script_info_map:
+                del self._script_info_map[path]
         
         self._update_list()
         self.queue_changed.emit(self._queue)
@@ -290,6 +314,10 @@ class ExecutionQueuePanel(QWidget):
         
         if reply == QMessageBox.Yes:
             self.clear_queue()
+    
+    def _on_select_all(self):
+        """全选所有项"""
+        self.list_widget.selectAll()
     
     def _on_execute(self):
         """执行队列中的脚本"""

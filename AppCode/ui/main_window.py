@@ -374,6 +374,17 @@ class MainWindow(QMainWindow):
             script_info_list: 脚本信息列表
         """
         self.execution_queue.add_scripts(script_paths, script_info_list)
+        
+        # 【Bug修复】获取当前方案并传递给执行面板
+        current_suite = self.script_browser.get_current_suite()
+        if current_suite:
+            self.execution_panel.set_current_suite(current_suite)
+            self.logger.info(f"Set current suite for execution: {current_suite.get('name')}")
+        else:
+            # 如果没有选择方案，清空执行面板的方案信息
+            self.execution_panel.set_current_suite(None)
+            self.logger.info("No suite selected, cleared execution panel suite info")
+        
         self.logger.info(f"Added {len(script_paths)} scripts to execution queue")
     
     def _on_queue_changed(self, queue):
@@ -394,6 +405,12 @@ class MainWindow(QMainWindow):
             return
         
         self.logger.info(f"Executing {len(script_paths)} scripts from queue")
+        
+        # 【Bug修复】在执行前再次确认当前方案（防止用户在添加到队列后切换了方案）
+        current_suite = self.script_browser.get_current_suite()
+        if current_suite:
+            self.execution_panel.set_current_suite(current_suite)
+            self.logger.info(f"Confirmed current suite before execution: {current_suite.get('name')}")
         
         # 切换到执行控制面板（现在是第二个标签页，索引为1）
         self.tab_widget.setCurrentIndex(1)

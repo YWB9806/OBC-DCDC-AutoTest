@@ -954,51 +954,37 @@ class ExecutionEngine(IExecutionEngine):
         Returns:
             测试结果: 'pass', 'fail', 'pending', 'error', 'timeout'
         """
-        # 将输出转换为字符串
-        output_text = '\n'.join(output_lines).lower()
-        
-        # 检查常见的测试通过标识（必须是明确的通过标识）
-        pass_indicators = [
-            'test passed', 'all tests passed',
-            '测试通过', '全部通过',
-            'passed', '合格'
-        ]
-        
-        # 检查常见的测试失败标识
-        fail_indicators = [
-            'test failed', 'failure', 'error', 'exception',
-            '测试失败', '失败', '错误', '异常',
-            'failed', 'fail', '不合格'
-        ]
-        
-        # 检查待判定标识
-        pending_indicators = [
-            '待判定', '需要确认', 'pending', 'to be confirmed',
-            'false'  # 添加false作为待判定标识
-        ]
-        
-        # 优先检查失败标识（因为失败最重要）
-        for indicator in fail_indicators:
-            if indicator in output_text:
-                return 'fail'
-        
-        # 检查待判定标识
-        for indicator in pending_indicators:
-            if indicator in output_text:
-                return 'pending'
-        
-        # 检查通过标识（必须明确）
-        for indicator in pass_indicators:
-            if indicator in output_text:
+        # 从后往前查找，最后的结果最准确
+        for line in reversed(output_lines):
+            line_stripped = line.strip()
+            if not line_stripped:
+                continue
+            
+            line_lower = line_stripped.lower()
+            
+            # 优先检查明确的合格标识（不合格中也包含"合格"，所以要先排除）
+            if '合格' in line_stripped and '不合格' not in line_stripped:
                 return 'pass'
+            elif 'pass' in line_lower and 'fail' not in line_lower:
+                return 'pass'
+            
+            # 检查不合格标识
+            elif '不合格' in line_stripped:
+                return 'fail'
+            elif 'fail' in line_lower:
+                return 'fail'
+            
+            # 检查待判定标识
+            elif '待判定' in line_stripped or '需要确认' in line_stripped:
+                return 'pending'
+            elif 'pending' in line_lower or 'to be confirmed' in line_lower:
+                return 'pending'
+            
+            # 检查错误标识
+            elif 'exception' in line_lower or 'traceback' in line_lower:
+                return 'error'
         
-        # 如果没有明确标识，根据输出内容判断
-        # 如果有错误关键词，判定为失败
-        if any(word in output_text for word in ['error', 'exception', 'traceback', '错误', '异常']):
-            return 'fail'
-        
-        # 如果脚本正常执行完成但没有明确的测试结果，标记为待判定（需要人工确认）
-        # 这是关键修复：不再默认返回pass，而是返回pending
+        # 如果没有找到明确的结果标识，返回待判定
         return 'pending'
     
     def _generate_execution_id(self) -> str:

@@ -329,23 +329,24 @@ class ResultViewer(QWidget):
                 batch_time_item.setTextAlignment(Qt.AlignCenter)
                 self.result_table.setItem(row, 2, batch_time_item)
                 
-                # 测试结果 - 转换为中文显示
+                # 测试结果 - 转换为中文显示（兼容中英文格式）
                 test_result = result.get('test_result', '-')
                 test_result_display = self._translate_test_result(test_result)
                 test_result_item = QTableWidgetItem(test_result_display)
                 
-                if test_result == 'pass':
+                # 统一判断逻辑，支持中英文格式
+                if test_result in ['pass', '合格']:
                     test_result_item.setForeground(QColor(0, 200, 0))
                     pass_count += 1
-                elif test_result == 'fail':
+                elif test_result in ['fail', '不合格']:
                     test_result_item.setForeground(QColor(255, 0, 0))
                     fail_count += 1
-                elif test_result == 'pending':
+                elif test_result in ['pending', '待判定']:
                     test_result_item.setForeground(QColor(255, 165, 0))
                     pending_count += 1
-                elif test_result == 'error':
+                elif test_result in ['error', '错误', '执行错误']:
                     test_result_item.setForeground(QColor(139, 0, 0))
-                elif test_result == 'timeout':
+                elif test_result in ['timeout', '超时']:
                     test_result_item.setForeground(QColor(128, 0, 128))
                 test_result_item.setTextAlignment(Qt.AlignCenter)
                 self.result_table.setItem(row, 3, test_result_item)
@@ -423,14 +424,19 @@ class ResultViewer(QWidget):
         return 0.0
     
     def _translate_test_result(self, test_result: str) -> str:
-        """将测试结果转换为中文显示
+        """将测试结果转换为中文显示（兼容中英文格式）
         
         Args:
-            test_result: 英文测试结果
+            test_result: 测试结果（支持中文或英文）
             
         Returns:
             中文测试结果
         """
+        # 如果已经是中文，直接返回
+        if test_result in ['合格', '不合格', '待判定', '错误', '超时', '执行错误']:
+            return test_result
+        
+        # 英文到中文的映射
         translation = {
             'pass': '合格',
             'fail': '不合格',

@@ -824,9 +824,9 @@ class ExecutionPanel(QWidget):
         try:
             from AppCode.utils.constants import TestResult
             
-            output_lines = execution_info.get('output', [])
             status = execution_info.get('status')
             error = execution_info.get('error', '')
+            exec_id = execution_info.get('id')
             
             # 首先检查执行状态
             if status == 'TIMEOUT':
@@ -836,8 +836,20 @@ class ExecutionPanel(QWidget):
             elif status == 'CANCELLED':
                 return TestResult.PENDING  # 取消的任务标记为待判定
             
-            # 从输出中查找测试结果
-            for line in reversed(output_lines):  # 从后往前查找，最后的结果最准确
+            # 获取最新的完整输出（直接从服务获取，而不是从execution_info）
+            output_lines = []
+            if exec_id:
+                try:
+                    output_lines = self.execution_service.get_execution_output(exec_id)
+                except Exception as e:
+                    self.logger.warning(f"Failed to get output for {exec_id}: {e}")
+                    # 如果获取失败，使用execution_info中的输出
+                    output_lines = execution_info.get('output', [])
+            else:
+                output_lines = execution_info.get('output', [])
+            
+            # 从输出中查找测试结果（从后往前查找，最后的结果最准确）
+            for line in reversed(output_lines):
                 line_lower = line.lower()
                 
                 # 检查合格标识

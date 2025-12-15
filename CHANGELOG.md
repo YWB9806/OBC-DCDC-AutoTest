@@ -4,19 +4,23 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/) 规范。
 
-## [未发布]
-
-### 新增
-- 待添加的新功能
-
-### 变更
-- 待修改的功能
+## [1.0.8] - 2025-12-15
 
 ### 修复
-- 待修复的问题
+- 🐛 **emoji字符导致脚本执行失败**：修复了脚本输出包含emoji字符时抛出UnicodeEncodeError的关键bug
+  - 问题：Windows系统默认使用GBK编码，无法输出emoji字符（如✅），导致脚本异常退出
+  - 根本原因：`print("✅通过")` 在GBK编码下会抛出 `UnicodeEncodeError: 'gbk' codec can't encode character '\u2705'`
+  - 修复1：设置环境变量 `PYTHONIOENCODING=utf-8`，让Python使用UTF-8输出
+  - 修复2：subprocess指定 `encoding='utf-8'` 和 `errors='replace'` 来正确读取UTF-8输出
+  - 影响：现在可以正常执行包含emoji和其他Unicode字符的脚本
 
-### 移除
-- 待移除的功能
+- 🐛 **脚本输出误判问题**：修复了包含特定关键词的输出被错误判定为失败的bug
+  - 问题1："误差"被误判为"错误"，导致正常测试输出被标记为红色错误
+  - 问题2：批次执行完成时没有检查子任务状态，即使有失败任务也标记为成功
+  - 修复：在`execution_panel.py`中排除"误差"关键词（`'错误' in line and '误差' not in line`）
+  - 修复：在`execution_engine.py`的批次监控中检查子任务状态，有失败则批次也标记为FAILED
+  - 影响：现在可以正确处理包含"误差"等内容的测试输出
+  - 影响：批次执行状态能够正确反映子任务的实际执行结果
 
 ---
 

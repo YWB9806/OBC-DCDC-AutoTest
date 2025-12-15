@@ -1103,7 +1103,7 @@ class ScriptBrowser(QWidget):
                 return
             
             # 验证脚本
-            if not self.script_manager.validate_script(script_path):
+            if not self.script_service.script_manager.validate_script(script_path):
                 QMessageBox.warning(self, "警告", "无效的Python脚本文件")
                 return
             

@@ -701,6 +701,7 @@ class ExecutionEngine(IExecutionEngine):
             import sys
             env = os.environ.copy()
             env['PYTHONUNBUFFERED'] = '1'  # 禁用Python输出缓冲
+            env['PYTHONIOENCODING'] = 'utf-8'  # 设置Python输出编码为UTF-8，支持emoji等特殊字符
             
             # Windows平台下隐藏控制台窗口
             startupinfo = None
@@ -716,6 +717,8 @@ class ExecutionEngine(IExecutionEngine):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                encoding='utf-8',  # 使用UTF-8解码，与PYTHONIOENCODING环境变量匹配
+                errors='replace',  # 遇到无法解码的字符时替换为�，避免程序崩溃
                 bufsize=1,  # 行缓冲
                 universal_newlines=True,
                 env=env,
@@ -891,12 +894,26 @@ class ExecutionEngine(IExecutionEngine):
                         self.logger.info(f"Batch execution resumed: {batch_id}")
                 
                 if all_completed:
-                    # 批次完成
-                    batch_info['status'] = ExecutionStatus.SUCCESS
+                    # 批次完成，检查是否有失败的任务
+                    has_failed = False
+                    for exec_id in execution_ids:
+                        if exec_id in self._executions:
+                            exec_status = self._executions[exec_id]['status']
+                            if exec_status in [ExecutionStatus.FAILED, ExecutionStatus.ERROR,
+                                             ExecutionStatus.TIMEOUT, ExecutionStatus.CANCELLED]:
+                                has_failed = True
+                                break
+                    
+                    # 根据子任务状态设置批次状态
+                    if has_failed:
+                        batch_info['status'] = ExecutionStatus.FAILED
+                    else:
+                        batch_info['status'] = ExecutionStatus.SUCCESS
+                    
                     batch_info['end_time'] = datetime.now()
                     
                     if self.logger:
-                        self.logger.info(f"Batch execution completed: {batch_id}")
+                        self.logger.info(f"Batch execution completed: {batch_id} - Status: {batch_info['status']}")
                     
                     # 调用回调
                     if batch_info.get('callback'):
@@ -963,13 +980,18 @@ class ExecutionEngine(IExecutionEngine):
             line_lower = line_stripped.lower()
             
             # 优先检查明确的合格标识（不合格中也包含"合格"，所以要先排除）
+            # 添加对"通过"的支持
             if '合格' in line_stripped and '不合格' not in line_stripped:
+                return 'pass'
+            elif '通过' in line_stripped and '不通过' not in line_stripped:
                 return 'pass'
             elif 'pass' in line_lower and 'fail' not in line_lower:
                 return 'pass'
             
             # 检查不合格标识
             elif '不合格' in line_stripped:
+                return 'fail'
+            elif '不通过' in line_stripped:
                 return 'fail'
             elif 'fail' in line_lower:
                 return 'fail'
@@ -980,7 +1002,7 @@ class ExecutionEngine(IExecutionEngine):
             elif 'pending' in line_lower or 'to be confirmed' in line_lower:
                 return 'pending'
             
-            # 检查错误标识
+            # 检查错误标识（注意：排除"误差"这种正常的测试输出）
             elif 'exception' in line_lower or 'traceback' in line_lower:
                 return 'error'
         

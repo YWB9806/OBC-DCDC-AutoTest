@@ -799,7 +799,7 @@ class ExecutionPanel(QWidget):
                         self._append_output(formatted_line, QColor(0, 128, 0))
                     elif '不合格' in line or 'FAIL' in line.upper():
                         self._append_output(formatted_line, QColor(255, 0, 0))
-                    elif 'ERROR' in line.upper() or '错误' in line:
+                    elif 'ERROR' in line.upper() or ('错误' in line and '误差' not in line):
                         self._append_output(formatted_line, QColor(255, 0, 0))
                     elif 'WARNING' in line.upper() or '警告' in line:
                         self._append_output(formatted_line, QColor(255, 165, 0))

@@ -746,26 +746,30 @@ class ExecutionPanel(QWidget):
                 duration_item.setTextAlignment(Qt.AlignCenter)
                 self.execution_table.setItem(row, 3, duration_item)
             
-            # 更新测试结果 - 从输出中提取
-            if status in ['SUCCESS', 'FAILED', 'CANCELLED', 'TIMEOUT', 'ERROR']:
+            # ⭐ 修复关键点：放宽结果更新条件，包含RUNNING状态
+            # 对于高进度的RUNNING状态也提取并显示结果
+            if status in ['RUNNING', 'SUCCESS', 'FAILED', 'CANCELLED', 'TIMEOUT', 'ERROR']:
                 from AppCode.utils.constants import TestResult
                 test_result = self._extract_test_result(execution_info)
-                result_item = QTableWidgetItem(test_result)
                 
-                # 根据结果设置颜色
-                if test_result == TestResult.PASS:
-                    result_item.setForeground(QColor(0, 128, 0))  # 绿色
-                elif test_result == TestResult.FAIL:
-                    result_item.setForeground(QColor(255, 0, 0))  # 红色
-                elif test_result == TestResult.PENDING:
-                    result_item.setForeground(QColor(255, 165, 0))  # 橙色
-                elif test_result == TestResult.ERROR:
-                    result_item.setForeground(QColor(139, 0, 0))  # 深红色
-                elif test_result == TestResult.TIMEOUT:
-                    result_item.setForeground(QColor(128, 0, 128))  # 紫色
-                
-                result_item.setTextAlignment(Qt.AlignCenter)
-                self.execution_table.setItem(row, 4, result_item)
+                # 只有当结果不是UNKNOWN时才更新，避免覆盖已有的有效结果
+                if test_result != TestResult.UNKNOWN:
+                    result_item = QTableWidgetItem(test_result)
+                    
+                    # 根据结果设置颜色
+                    if test_result == TestResult.PASS:
+                        result_item.setForeground(QColor(0, 128, 0))  # 绿色
+                    elif test_result == TestResult.FAIL:
+                        result_item.setForeground(QColor(255, 0, 0))  # 红色
+                    elif test_result == TestResult.PENDING:
+                        result_item.setForeground(QColor(255, 165, 0))  # 橙色
+                    elif test_result == TestResult.ERROR:
+                        result_item.setForeground(QColor(139, 0, 0))  # 深红色
+                    elif test_result == TestResult.TIMEOUT:
+                        result_item.setForeground(QColor(128, 0, 128))  # 紫色
+                    
+                    result_item.setTextAlignment(Qt.AlignCenter)
+                    self.execution_table.setItem(row, 4, result_item)
         
         except Exception as e:
             self.logger.error(f"Error updating table row: {e}", exc_info=True)
@@ -813,7 +817,7 @@ class ExecutionPanel(QWidget):
             self.logger.error(f"Error updating output: {e}", exc_info=True)
     
     def _extract_test_result(self, execution_info: dict) -> str:
-        """从执行信息中提取测试结果
+        """从执行信息中提取测试结果（修复版 - 支持RUNNING状态）
         
         Args:
             execution_info: 执行信息
@@ -827,6 +831,7 @@ class ExecutionPanel(QWidget):
             status = execution_info.get('status')
             error = execution_info.get('error', '')
             exec_id = execution_info.get('id')
+            progress = execution_info.get('progress', 0)
             
             # 首先检查执行状态
             if status == 'TIMEOUT':
@@ -875,6 +880,12 @@ class ExecutionPanel(QWidget):
             # 如果输出中有错误信息
             if error and ('exception' in error.lower() or 'error' in error.lower()):
                 return TestResult.ERROR
+            
+            # ⭐ 修复关键点：对于RUNNING状态的处理
+            if status == 'RUNNING':
+                # 如果进度很高但没有找到结果，返回UNKNOWN（不更新结果列）
+                # 这样可以避免在脚本还在运行时显示错误的结果
+                return TestResult.UNKNOWN
             
             # 如果没有找到明确的结果，根据执行状态判断
             if status == 'SUCCESS':

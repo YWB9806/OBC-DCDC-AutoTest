@@ -123,13 +123,29 @@ class ResultViewer(QWidget):
         # 分割器
         splitter = QSplitter(Qt.Vertical)
         
-        # 结果列表
+        # 结果列表 - 移除开始时间列
         self.result_table = QTableWidget()
-        self.result_table.setColumnCount(8)
+        self.result_table.setColumnCount(7)
         self.result_table.setHorizontalHeaderLabels([
-            "脚本名称", "测试方案", "批次时间", "测试结果", "状态", "开始时间", "耗时(秒)", "错误信息"
+            "脚本名称", "测试方案", "批次时间", "测试结果", "状态", "耗时(秒)", "错误信息"
         ])
-        self.result_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        
+        # 优化列宽设置
+        header = self.result_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.Stretch)  # 脚本名称自动拉伸
+        header.setSectionResizeMode(1, QHeaderView.Fixed)
+        header.setSectionResizeMode(2, QHeaderView.Fixed)
+        header.setSectionResizeMode(3, QHeaderView.Fixed)
+        header.setSectionResizeMode(4, QHeaderView.Fixed)
+        header.setSectionResizeMode(5, QHeaderView.Fixed)
+        header.setSectionResizeMode(6, QHeaderView.Stretch)  # 错误信息也可以拉伸
+        
+        self.result_table.setColumnWidth(1, 150)  # 测试方案
+        self.result_table.setColumnWidth(2, 100)  # 批次时间
+        self.result_table.setColumnWidth(3, 80)   # 测试结果
+        self.result_table.setColumnWidth(4, 80)   # 状态
+        self.result_table.setColumnWidth(5, 90)   # 耗时
+        
         self.result_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.result_table.itemSelectionChanged.connect(self._on_selection_changed)
         self.result_table.verticalHeader().setVisible(True)  # 显示行号
@@ -364,27 +380,15 @@ class ResultViewer(QWidget):
                 status_item.setTextAlignment(Qt.AlignCenter)
                 self.result_table.setItem(row, 4, status_item)
                 
-                # 开始时间
-                start_time = result.get('start_time', '')
-                if start_time:
-                    try:
-                        dt = datetime.fromisoformat(start_time.replace('T', ' ').split('.')[0])
-                        start_time = dt.strftime('%Y-%m-%d %H:%M:%S')
-                    except:
-                        pass
-                start_time_item = QTableWidgetItem(start_time)
-                start_time_item.setTextAlignment(Qt.AlignCenter)
-                self.result_table.setItem(row, 5, start_time_item)
-                
-                # 耗时
+                # 耗时（移除开始时间列后，索引从6改为5）
                 duration = self._calculate_duration(result)
                 duration_item = QTableWidgetItem(f"{duration:.2f}")
                 duration_item.setTextAlignment(Qt.AlignCenter)
-                self.result_table.setItem(row, 6, duration_item)
+                self.result_table.setItem(row, 5, duration_item)
                 
-                # 错误信息
+                # 错误信息（索引从7改为6）
                 error = result.get('error', '')
-                self.result_table.setItem(row, 7, QTableWidgetItem(error[:50] if error else ''))
+                self.result_table.setItem(row, 6, QTableWidgetItem(error[:100] if error else ''))
             
             # 更新统计信息
             total = len(results)

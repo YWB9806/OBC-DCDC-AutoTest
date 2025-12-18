@@ -4,15 +4,56 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/) 规范。
 
+## [1.0.9] - 2025-12-18
+
+### 优化
+- ✨ **UI界面优化**：优化测试方案管理和执行结果界面的显示效果
+  - **测试方案管理界面**：
+    - 移除ID列，界面更简洁（ID存储在内部供功能使用）
+    - 方案名称列使用Stretch模式，长名称完整显示不被截断
+    - 窗口最小宽度从800px增加到900px
+    - 优化列宽比例：方案名称（自动拉伸）、脚本数（80px）、执行次数（90px）、最后执行（150px）、操作按钮（220px）
+    - 优化按钮布局：每个按钮最大宽度60px，间距4px
+  - **执行结果界面**：
+    - 删除"开始时间"列，减少冗余信息（开始时间在详情中仍可查看）
+    - 脚本名称列使用Stretch模式，长名称完整显示
+    - 优化列宽比例：脚本名称（自动拉伸）、测试方案（150px）、批次时间（100px）、测试结果（80px）、状态（80px）、耗时（90px）、错误信息（自动拉伸）
+    - 错误信息显示长度从50字符增加到100字符
+  - 影响：界面更美观，重要信息更突出，长名称不会被截断
+
+### 修复
+- 🐛 **执行列表状态更新不同步**：修复了脚本执行完毕后执行列表状态和结果显示不更新的关键bug
+  - 问题：脚本执行完毕后，执行输出UI正确显示结果（如"合格"），但执行列表中状态仍显示"执行中"，结果列为空
+  - 根本原因：结果列更新条件过于严格，只在终态（SUCCESS/FAILED等）时更新，导致RUNNING状态下已输出的结果无法显示
+  - 修复位置：[`AppCode/ui/execution_panel.py`](AppCode/ui/execution_panel.py:749)
+  - 修复内容：
+    - 放宽结果更新条件，允许RUNNING状态也提取和显示结果
+    - 在`_update_table_row()`方法中，将状态检查从`['SUCCESS', 'FAILED', ...]`扩展为`['RUNNING', 'SUCCESS', 'FAILED', ...]`
+    - 在`_extract_test_result()`方法中，对RUNNING状态也进行结果提取
+    - 只有当提取到有效结果（非UNKNOWN）时才更新结果列，避免覆盖已有结果
+  - 影响：现在脚本输出结果后能立即在执行列表中显示，无需等待状态变为SUCCESS
+
+- 🐛 **智能编码检测**：修复了v1.0.8强制UTF-8编码导致C# DLL输出乱码的问题
+  - 问题：v1.0.8修复emoji后，C# DLL的GBK输出显示为乱码（��������）
+  - 根本原因：强制UTF-8解码无法正确处理GBK编码的输出
+  - 解决方案：实现智能编码检测机制
+    - subprocess使用二进制模式读取输出（不预设编码）
+    - 实现`smart_decode()`函数：先尝试UTF-8解码，失败则尝试GBK解码
+    - 保留`PYTHONIOENCODING=utf-8`环境变量，让Python脚本使用UTF-8输出
+  - 影响：现在可以同时支持Python脚本的emoji输出和C# DLL的GBK输出
+
+---
+
 ## [1.0.8] - 2025-12-15
 
 ### 修复
 - 🐛 **emoji字符导致脚本执行失败**：修复了脚本输出包含emoji字符时抛出UnicodeEncodeError的关键bug
   - 问题：Windows系统默认使用GBK编码，无法输出emoji字符（如✅），导致脚本异常退出
   - 根本原因：`print("✅通过")` 在GBK编码下会抛出 `UnicodeEncodeError: 'gbk' codec can't encode character '\u2705'`
-  - 修复1：设置环境变量 `PYTHONIOENCODING=utf-8`，让Python使用UTF-8输出
-  - 修复2：subprocess指定 `encoding='utf-8'` 和 `errors='replace'` 来正确读取UTF-8输出
-  - 影响：现在可以正常执行包含emoji和其他Unicode字符的脚本
+  - 修复：设置环境变量 `PYTHONIOENCODING=utf-8`，让Python使用UTF-8输出
+  - 修复：subprocess指定 `encoding='utf-8'` 和 `errors='replace'`
+  - 影响：现在可以正常执行包含emoji字符的脚本
+  - 已知问题：强制UTF-8编码导致C# DLL的GBK输出显示为乱码（已在v1.0.9修复）
 
 - 🐛 **脚本输出误判问题**：修复了包含特定关键词的输出被错误判定为失败的bug
   - 问题1："误差"被误判为"错误"，导致正常测试输出被标记为红色错误

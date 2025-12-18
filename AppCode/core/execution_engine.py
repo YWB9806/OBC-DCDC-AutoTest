@@ -712,15 +712,12 @@ class ExecutionEngine(IExecutionEngine):
                 startupinfo.wShowWindow = subprocess.SW_HIDE
                 creationflags = subprocess.CREATE_NO_WINDOW
             
+            # 使用二进制模式读取，避免编码问题
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True,
-                encoding='utf-8',  # 使用UTF-8解码，与PYTHONIOENCODING环境变量匹配
-                errors='replace',  # 遇到无法解码的字符时替换为�，避免程序崩溃
                 bufsize=1,  # 行缓冲
-                universal_newlines=True,
                 env=env,
                 startupinfo=startupinfo,
                 creationflags=creationflags
@@ -728,6 +725,27 @@ class ExecutionEngine(IExecutionEngine):
             
             with self._lock:
                 self._processes[execution_id] = process
+            
+            # 智能解码函数：尝试多种编码
+            def smart_decode(byte_data):
+                """智能解码二进制数据，尝试UTF-8和GBK编码"""
+                if not byte_data:
+                    return ""
+                
+                # 首先尝试UTF-8（支持emoji）
+                try:
+                    return byte_data.decode('utf-8')
+                except UnicodeDecodeError:
+                    pass
+                
+                # 如果UTF-8失败，尝试GBK（支持C# DLL输出）
+                try:
+                    return byte_data.decode('gbk')
+                except UnicodeDecodeError:
+                    pass
+                
+                # 如果都失败，使用UTF-8并替换错误字符
+                return byte_data.decode('utf-8', errors='replace')
             
             # 实时读取输出
             stderr_lines = []
@@ -763,10 +781,10 @@ class ExecutionEngine(IExecutionEngine):
                         process.kill()
                     break
                 
-                # 读取stdout
-                line = process.stdout.readline()
-                if line:
-                    line = line.rstrip()
+                # 读取stdout（二进制模式）
+                line_bytes = process.stdout.readline()
+                if line_bytes:
+                    line = smart_decode(line_bytes).rstrip()
                     with self._lock:
                         execution_info['output'].append(line)
                     
@@ -776,16 +794,18 @@ class ExecutionEngine(IExecutionEngine):
                 # 检查进程是否结束
                 if process.poll() is not None:
                     # 读取剩余输出
-                    remaining = process.stdout.read()
-                    if remaining:
+                    remaining_bytes = process.stdout.read()
+                    if remaining_bytes:
+                        remaining = smart_decode(remaining_bytes)
                         for line in remaining.split('\n'):
                             if line.strip():
                                 with self._lock:
                                     execution_info['output'].append(line.rstrip())
                     
                     # 读取stderr
-                    stderr_output = process.stderr.read()
-                    if stderr_output:
+                    stderr_bytes = process.stderr.read()
+                    if stderr_bytes:
+                        stderr_output = smart_decode(stderr_bytes)
                         stderr_lines = stderr_output.strip().split('\n')
                     
                     break

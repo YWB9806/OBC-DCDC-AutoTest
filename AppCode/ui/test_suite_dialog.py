@@ -132,7 +132,7 @@ class ManageSuitesDialog(QDialog):
     def _init_ui(self):
         """初始化UI"""
         self.setWindowTitle("测试方案管理")
-        self.setMinimumWidth(800)
+        self.setMinimumWidth(900)
         self.setMinimumHeight(600)
         
         layout = QVBoxLayout(self)
@@ -161,13 +161,26 @@ class ManageSuitesDialog(QDialog):
         
         layout.addLayout(toolbar_layout)
         
-        # 方案列表
+        # 方案列表 - 移除ID列
         self.suite_table = QTableWidget()
-        self.suite_table.setColumnCount(6)
+        self.suite_table.setColumnCount(5)
         self.suite_table.setHorizontalHeaderLabels([
-            "ID", "方案名称", "脚本数", "执行次数", "最后执行", "操作"
+            "方案名称", "脚本数", "执行次数", "最后执行", "操作"
         ])
-        self.suite_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        
+        # 优化列宽设置
+        header = self.suite_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.Stretch)  # 方案名称自动拉伸
+        header.setSectionResizeMode(1, QHeaderView.Fixed)
+        header.setSectionResizeMode(2, QHeaderView.Fixed)
+        header.setSectionResizeMode(3, QHeaderView.Fixed)
+        header.setSectionResizeMode(4, QHeaderView.Fixed)
+        
+        self.suite_table.setColumnWidth(1, 80)   # 脚本数
+        self.suite_table.setColumnWidth(2, 90)   # 执行次数
+        self.suite_table.setColumnWidth(3, 150)  # 最后执行
+        self.suite_table.setColumnWidth(4, 220)  # 操作按钮
+        
         self.suite_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.suite_table.setEditTriggers(QTableWidget.NoEditTriggers)
         layout.addWidget(self.suite_table)
@@ -218,24 +231,20 @@ class ManageSuitesDialog(QDialog):
             row = self.suite_table.rowCount()
             self.suite_table.insertRow(row)
             
-            # ID - 居中对齐
-            id_item = QTableWidgetItem(str(suite.get('id', '')))
-            id_item.setTextAlignment(Qt.AlignCenter)
-            self.suite_table.setItem(row, 0, id_item)
-            
-            # 名称 - 左对齐（默认）
+            # 方案名称 - 左对齐，存储ID在UserRole中
             name_item = QTableWidgetItem(suite.get('name', ''))
-            self.suite_table.setItem(row, 1, name_item)
+            name_item.setData(Qt.UserRole, suite.get('id'))  # 存储ID供后续使用
+            self.suite_table.setItem(row, 0, name_item)
             
             # 脚本数 - 居中对齐
             script_count_item = QTableWidgetItem(str(suite.get('script_count', 0)))
             script_count_item.setTextAlignment(Qt.AlignCenter)
-            self.suite_table.setItem(row, 2, script_count_item)
+            self.suite_table.setItem(row, 1, script_count_item)
             
             # 执行次数 - 居中对齐
             exec_count_item = QTableWidgetItem(str(suite.get('execution_count', 0)))
             exec_count_item.setTextAlignment(Qt.AlignCenter)
-            self.suite_table.setItem(row, 3, exec_count_item)
+            self.suite_table.setItem(row, 2, exec_count_item)
             
             # 最后执行时间 - 居中对齐
             last_exec = suite.get('last_executed_time', '-')
@@ -248,26 +257,30 @@ class ManageSuitesDialog(QDialog):
                     pass
             last_exec_item = QTableWidgetItem(last_exec)
             last_exec_item.setTextAlignment(Qt.AlignCenter)
-            self.suite_table.setItem(row, 4, last_exec_item)
+            self.suite_table.setItem(row, 3, last_exec_item)
             
             # 操作按钮
             btn_widget = QWidget()
             btn_layout = QHBoxLayout(btn_widget)
-            btn_layout.setContentsMargins(2, 2, 2, 2)
+            btn_layout.setContentsMargins(4, 2, 4, 2)
+            btn_layout.setSpacing(4)
             
             load_btn = QPushButton("加载")
+            load_btn.setMaximumWidth(60)
             load_btn.clicked.connect(lambda checked, s=suite: self._on_load_suite(s))
             btn_layout.addWidget(load_btn)
             
             edit_btn = QPushButton("编辑")
+            edit_btn.setMaximumWidth(60)
             edit_btn.clicked.connect(lambda checked, s=suite: self._on_edit_suite(s))
             btn_layout.addWidget(edit_btn)
             
             delete_btn = QPushButton("删除")
+            delete_btn.setMaximumWidth(60)
             delete_btn.clicked.connect(lambda checked, s=suite: self._on_delete_suite(s))
             btn_layout.addWidget(delete_btn)
             
-            self.suite_table.setCellWidget(row, 5, btn_widget)
+            self.suite_table.setCellWidget(row, 4, btn_widget)
     
     def _on_selection_changed(self):
         """选择变化"""
@@ -277,7 +290,8 @@ class ManageSuitesDialog(QDialog):
             return
         
         row = selected_rows[0].row()
-        suite_id = int(self.suite_table.item(row, 0).text())
+        # 从第一列的UserRole中获取ID
+        suite_id = self.suite_table.item(row, 0).data(Qt.UserRole)
         
         try:
             suite = self.suite_service.get_suite(suite_id)
@@ -421,8 +435,9 @@ class ManageSuitesDialog(QDialog):
             return
         
         row = selected_rows[0].row()
-        suite_id = int(self.suite_table.item(row, 0).text())
-        suite_name = self.suite_table.item(row, 1).text()
+        # 从UserRole获取ID
+        suite_id = self.suite_table.item(row, 0).data(Qt.UserRole)
+        suite_name = self.suite_table.item(row, 0).text()
         
         file_path, _ = QFileDialog.getSaveFileName(
             self, "导出测试方案", f"{suite_name}.json",

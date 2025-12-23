@@ -494,14 +494,43 @@ class MainWindow(QMainWindow):
     def _on_skip_current(self):
         """跳过当前脚本"""
         try:
-            QMessageBox.information(self, "提示", "跳过当前脚本功能开发中...\n当前版本暂不支持跳过单个脚本")
-            self.logger.info("Skip current script requested (not implemented)")
+            exec_id = self.execution_panel._current_execution_id or self.execution_panel._current_batch_id
+            if not exec_id:
+                QMessageBox.warning(self, "提示", "当前没有正在执行的脚本")
+                return
+            
+            reply = QMessageBox.question(
+                self,
+                "确认跳过",
+                "确定要跳过当前正在执行的脚本吗？\n跳过后将立即执行下一条脚本。",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            
+            if reply == QMessageBox.Yes:
+                result = self.execution_service.skip_current_script(exec_id)
+                if result['success']:
+                    self.logger.info(f"Skipped current script: {exec_id}")
+                    self.status_bar.showMessage("已跳过当前脚本", 3000)
+                else:
+                    error_msg = result.get('error', '未知错误')
+                    QMessageBox.warning(self, "警告", f"跳过失败: {error_msg}")
+                    self.logger.warning(f"Failed to skip current script: {error_msg}")
         except Exception as e:
             self.logger.error(f"Error in skip current: {e}")
+            QMessageBox.critical(self, "错误", f"跳过当前脚本时出错: {e}")
     
     def _on_settings(self):
         """打开设置对话框"""
-        QMessageBox.information(self, "设置", "设置功能开发中...")
+        try:
+            from .settings_dialog import SettingsDialog
+            dialog = SettingsDialog(self)
+            if dialog.exec_():
+                self.logger.info("Settings saved")
+                self.status_bar.showMessage("设置已保存", 3000)
+        except Exception as e:
+            self.logger.error(f"Error opening settings: {e}")
+            QMessageBox.critical(self, "错误", f"打开设置时出错: {e}")
     
     def _on_check_update(self):
         """手动检查更新"""

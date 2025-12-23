@@ -105,55 +105,65 @@ class ScriptSelectionDialog(QDialog):
         layout.addLayout(button_layout)
     
     def _load_scripts(self):
-        """加载脚本到树形控件"""
-        self.tree_widget.clear()
+        """加载脚本到树形控件（优化版）"""
+        # 暂时断开信号，避免在批量添加时触发多次更新
+        self.tree_widget.itemChanged.disconnect(self._on_item_changed)
+        self.tree_widget.setUpdatesEnabled(False)
         
-        # 按文件夹分组
-        folder_items = {}
-        
-        for script in self.scripts:
-            script_path = script['path']
-            script_name = script['name']
+        try:
+            self.tree_widget.clear()
             
-            # 计算相对路径
-            try:
-                rel_path = os.path.relpath(script_path, self.source_path)
-                folder = os.path.dirname(rel_path)
-            except:
-                rel_path = script_path
-                folder = ""
+            # 按文件夹分组
+            folder_items = {}
             
-            # 获取文件大小
-            try:
-                size = os.path.getsize(script_path)
-                size_str = self._format_size(size)
-            except:
-                size_str = "N/A"
-            
-            # 创建或获取文件夹节点
-            if folder and folder != ".":
-                if folder not in folder_items:
-                    folder_item = QTreeWidgetItem(self.tree_widget)
-                    folder_item.setText(0, f"📁 {folder}")
-                    folder_item.setFlags(folder_item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsTristate)
-                    folder_item.setCheckState(0, Qt.Unchecked)
-                    folder_item.setExpanded(True)
-                    folder_items[folder] = folder_item
+            for script in self.scripts:
+                script_path = script['path']
+                script_name = script['name']
                 
-                parent_item = folder_items[folder]
-            else:
-                parent_item = self.tree_widget
+                # 计算相对路径
+                try:
+                    rel_path = os.path.relpath(script_path, self.source_path)
+                    folder = os.path.dirname(rel_path)
+                except:
+                    rel_path = script_path
+                    folder = ""
+                
+                # 获取文件大小
+                try:
+                    size = os.path.getsize(script_path)
+                    size_str = self._format_size(size)
+                except:
+                    size_str = "N/A"
+                
+                # 创建或获取文件夹节点
+                if folder and folder != ".":
+                    if folder not in folder_items:
+                        folder_item = QTreeWidgetItem(self.tree_widget)
+                        folder_item.setText(0, f"📁 {folder}")
+                        folder_item.setFlags(folder_item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsTristate)
+                        folder_item.setCheckState(0, Qt.Unchecked)
+                        folder_item.setExpanded(False)  # 默认折叠，提高性能
+                        folder_items[folder] = folder_item
+                    
+                    parent_item = folder_items[folder]
+                else:
+                    parent_item = self.tree_widget
+                
+                # 创建脚本节点
+                script_item = QTreeWidgetItem(parent_item)
+                script_item.setText(0, f"📄 {script_name}")
+                script_item.setText(1, rel_path)
+                script_item.setText(2, size_str)
+                script_item.setData(0, Qt.UserRole, script)
+                script_item.setFlags(script_item.flags() | Qt.ItemIsUserCheckable)
+                script_item.setCheckState(0, Qt.Checked)  # 默认全选
             
-            # 创建脚本节点
-            script_item = QTreeWidgetItem(parent_item)
-            script_item.setText(0, f"📄 {script_name}")
-            script_item.setText(1, rel_path)
-            script_item.setText(2, size_str)
-            script_item.setData(0, Qt.UserRole, script)
-            script_item.setFlags(script_item.flags() | Qt.ItemIsUserCheckable)
-            script_item.setCheckState(0, Qt.Checked)  # 默认全选
+            self._update_stats()
         
-        self._update_stats()
+        finally:
+            # 恢复UI更新和信号连接
+            self.tree_widget.setUpdatesEnabled(True)
+            self.tree_widget.itemChanged.connect(self._on_item_changed)
     
     def _format_size(self, size):
         """格式化文件大小"""
@@ -227,29 +237,57 @@ class ScriptSelectionDialog(QDialog):
         self.stats_label.setText(f"已选择: {selected} / {total} 个脚本")
     
     def _on_select_all(self):
-        """全选"""
-        self._set_all_check_state(Qt.Checked)
+        """全选（优化版）"""
+        # 暂时断开信号，避免每次状态改变都触发更新
+        self.tree_widget.itemChanged.disconnect(self._on_item_changed)
+        self.tree_widget.setUpdatesEnabled(False)
+        
+        try:
+            self._set_all_check_state(Qt.Checked)
+        finally:
+            self.tree_widget.setUpdatesEnabled(True)
+            self.tree_widget.itemChanged.connect(self._on_item_changed)
+            self._update_stats()
     
     def _on_deselect_all(self):
-        """全不选"""
-        self._set_all_check_state(Qt.Unchecked)
+        """全不选（优化版）"""
+        # 暂时断开信号，避免每次状态改变都触发更新
+        self.tree_widget.itemChanged.disconnect(self._on_item_changed)
+        self.tree_widget.setUpdatesEnabled(False)
+        
+        try:
+            self._set_all_check_state(Qt.Unchecked)
+        finally:
+            self.tree_widget.setUpdatesEnabled(True)
+            self.tree_widget.itemChanged.connect(self._on_item_changed)
+            self._update_stats()
     
     def _on_invert(self):
-        """反选"""
-        def invert_recursive(item):
-            for i in range(item.childCount()):
-                child = item.child(i)
-                script = child.data(0, Qt.UserRole)
-                
-                if script and not child.isHidden():
-                    current = child.checkState(0)
-                    new_state = Qt.Unchecked if current == Qt.Checked else Qt.Checked
-                    child.setCheckState(0, new_state)
-                
-                invert_recursive(child)
+        """反选（优化版）"""
+        # 暂时断开信号，避免每次状态改变都触发更新
+        self.tree_widget.itemChanged.disconnect(self._on_item_changed)
+        self.tree_widget.setUpdatesEnabled(False)
         
-        root = self.tree_widget.invisibleRootItem()
-        invert_recursive(root)
+        try:
+            def invert_recursive(item):
+                for i in range(item.childCount()):
+                    child = item.child(i)
+                    script = child.data(0, Qt.UserRole)
+                    
+                    if script and not child.isHidden():
+                        current = child.checkState(0)
+                        new_state = Qt.Unchecked if current == Qt.Checked else Qt.Checked
+                        child.setCheckState(0, new_state)
+                    
+                    invert_recursive(child)
+            
+            root = self.tree_widget.invisibleRootItem()
+            invert_recursive(root)
+        
+        finally:
+            self.tree_widget.setUpdatesEnabled(True)
+            self.tree_widget.itemChanged.connect(self._on_item_changed)
+            self._update_stats()
     
     def _set_all_check_state(self, state):
         """设置所有可见脚本的复选框状态"""

@@ -10,6 +10,15 @@ import logging
 class Container:
     """依赖注入容器"""
     
+    _instance = None  # 单例实例
+    
+    @classmethod
+    def get_instance(cls):
+        """获取容器单例实例"""
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+    
     def __init__(self):
         """初始化容器"""
         self._services = {}
@@ -152,8 +161,9 @@ class Container:
         """创建执行引擎"""
         from AppCode.core.execution_engine import ExecutionEngine
         logger = self.resolve('log_manager').get_logger('execution_engine')
+        config_manager = self.resolve('config_manager')
         # 车载ECU测试必须顺序执行，硬件资源独占
-        return ExecutionEngine(logger, max_workers=1)
+        return ExecutionEngine(logger, max_workers=1, config_manager=config_manager)
     
     def _create_result_analyzer(self):
         """创建结果分析器"""

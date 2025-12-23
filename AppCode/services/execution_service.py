@@ -301,6 +301,40 @@ class ExecutionService:
                 'error': str(e)
             }
     
+    def skip_current_script(self, execution_id: str) -> Dict[str, Any]:
+        """跳过当前正在执行的脚本
+        
+        Args:
+            execution_id: 执行ID（可以是单个脚本ID或批次ID）
+            
+        Returns:
+            操作结果
+        """
+        try:
+            success = self.engine.skip_current_script(execution_id)
+            
+            if success:
+                if self.logger:
+                    self.logger.info(f"Skipped current script: {execution_id}")
+                return {
+                    'success': True,
+                    'message': 'Current script skipped'
+                }
+            else:
+                return {
+                    'success': False,
+                    'error': 'No running script to skip'
+                }
+        
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"Failed to skip current script: {e}")
+            
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
     def get_execution_status(self, execution_id: str) -> Dict[str, Any]:
         """获取执行状态
         

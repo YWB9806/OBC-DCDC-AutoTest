@@ -179,7 +179,8 @@ class UserService:
         username: str,
         password: str,
         role: str = UserRole.USER,
-        email: Optional[str] = None
+        email: Optional[str] = None,
+        can_view_results: int = 0
     ) -> Dict[str, Any]:
         """创建用户
         
@@ -188,6 +189,7 @@ class UserService:
             password: 密码
             role: 角色
             email: 邮箱
+            can_view_results: 是否允许查看执行结果 (0或1)
             
         Returns:
             创建结果
@@ -201,6 +203,10 @@ class UserService:
                     'error': 'Username already exists'
                 }
             
+            # 超级管理员自动拥有查看结果权限
+            if role == UserRole.SUPER_ADMIN:
+                can_view_results = 1
+            
             # 创建用户
             user_data = {
                 'username': username,
@@ -208,13 +214,14 @@ class UserService:
                 'role': role,
                 'email': email,
                 'is_active': True,
+                'can_view_results': can_view_results,
                 'created_at': datetime.now().isoformat()
             }
             
             user_id = self.user_repo.create(user_data)
             
             if self.logger:
-                self.logger.info(f"User created: {username} (role: {role})")
+                self.logger.info(f"User created: {username} (role: {role}, can_view_results: {can_view_results})")
             
             return {
                 'success': True,

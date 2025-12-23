@@ -1,0 +1,26 @@
+{
+  "database": {
+    "path": "data/script_executor.db"
+  },
+  "execution": {
+    "max_workers": 1,
+    "timeout": 3600,
+    "mode": "sequential",
+    "script_timeout": 3600
+  },
+  "scripts": {
+    "root_path": "TestScripts"
+  },
+  "ui": {
+    "theme": "default",
+    "language": "zh_CN"
+  },
+  "backup": {
+    "auto_backup": true,
+    "backup_interval": 86400,
+    "max_backups": 10
+  },
+  "update": {
+    "check_on_startup": false
+  }
+}

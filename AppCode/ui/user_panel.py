@@ -258,7 +258,8 @@ class UserPanel(QWidget):
                     username=data['username'],
                     password=data['password'],
                     role=data['role'],
-                    email=data.get('email')
+                    email=data.get('email'),
+                    can_view_results=data.get('can_view_results', 0)
                 )
                 
                 if result['success']:

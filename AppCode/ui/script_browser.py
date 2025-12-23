@@ -218,11 +218,16 @@ class ScriptBrowser(QWidget):
             self.category_combo.addItem("全部")
             self.category_combo.addItems(categories)
             
-            # 更新树形控件
-            self._update_tree()
-            
-            # 更新统计信息
-            self._update_stats()
+            # 批量更新UI（禁用更新直到完成）
+            self.tree_widget.setUpdatesEnabled(False)
+            try:
+                # 更新树形控件
+                self._update_tree()
+                
+                # 更新统计信息
+                self._update_stats()
+            finally:
+                self.tree_widget.setUpdatesEnabled(True)
             
             # 加载方案列表
             self._load_suites()
@@ -292,7 +297,7 @@ class ScriptBrowser(QWidget):
                             base_item = QTreeWidgetItem(self.tree_widget)
                             base_item.setText(0, f"📁 {base_name}")
                             base_item.setText(1, base_path)
-                            base_item.setExpanded(True)
+                            base_item.setExpanded(False)  # 默认折叠，提高性能
                             base_item.setFlags(base_item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsTristate)
                             base_item.setCheckState(0, Qt.Unchecked)
                             root_nodes[base_path] = base_item
@@ -312,7 +317,7 @@ class ScriptBrowser(QWidget):
                             base_item = QTreeWidgetItem(self.tree_widget)
                             base_item.setText(0, f"📁 {base_name}")
                             base_item.setText(1, base_path)
-                            base_item.setExpanded(True)
+                            base_item.setExpanded(False)  # 默认折叠，提高性能
                             base_item.setFlags(base_item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsTristate)
                             base_item.setCheckState(0, Qt.Unchecked)
                             root_nodes[base_path] = base_item
@@ -888,6 +893,7 @@ class ScriptBrowser(QWidget):
             self.logger.info(f"Auto-loading {len(dirs_to_scan)} directories for missing scripts: {dirs_to_scan}")
             
             # 扫描并加载这些目录
+            total_added = 0
             for dir_path in dirs_to_scan:
                 try:
                     if dir_path not in self._custom_paths:
@@ -909,6 +915,7 @@ class ScriptBrowser(QWidget):
                                     existing_paths.add(script['path'])
                                     added_count += 1
                             
+                            total_added += added_count
                             self.logger.info(f"Added {added_count} scripts from {dir_path}")
                         else:
                             self.logger.warning(f"Failed to scan {dir_path}: {result.get('error')}")
@@ -917,9 +924,14 @@ class ScriptBrowser(QWidget):
                     self.logger.error(f"Error scanning directory {dir_path}: {e}")
                     continue
             
-            # 更新UI
-            self._update_tree()
-            self._update_stats()
+            # 只在有新脚本添加时才更新UI（批量更新）
+            if total_added > 0:
+                self.tree_widget.setUpdatesEnabled(False)
+                try:
+                    self._update_tree()
+                    self._update_stats()
+                finally:
+                    self.tree_widget.setUpdatesEnabled(True)
             
             self.logger.info(f"Auto-load complete. Total scripts: {len(self._scripts)}")
         
@@ -1202,21 +1214,29 @@ class ScriptBrowser(QWidget):
                     # 使用集合优化查找性能
                     existing_paths = {s['path'] for s in self._scripts}
                     
-                    # 添加选中的脚本到列表
+                    # 批量添加选中的脚本到列表（避免逐个添加触发多次更新）
+                    added_count = 0
                     for script in selected_scripts:
                         if script['path'] not in existing_paths:
                             self._scripts.append(script)
                             self._filtered_scripts.append(script)
                             existing_paths.add(script['path'])
+                            added_count += 1
                     
-                    # 更新树形控件
-                    self._update_tree()
-                    self._update_stats()
+                    # 只在有新脚本添加时才更新UI
+                    if added_count > 0:
+                        # 使用优化的更新方法：禁用UI更新直到完成
+                        self.tree_widget.setUpdatesEnabled(False)
+                        try:
+                            self._update_tree()
+                            self._update_stats()
+                        finally:
+                            self.tree_widget.setUpdatesEnabled(True)
                     
-                    self.logger.info(f"Added {len(selected_scripts)} scripts from folder: {folder_path}")
+                    self.logger.info(f"Added {added_count} scripts from folder: {folder_path}")
                     QMessageBox.information(
                         self, "成功",
-                        f"已从文件夹添加 {len(selected_scripts)} 个脚本:\n{os.path.basename(folder_path)}"
+                        f"已从文件夹添加 {added_count} 个脚本:\n{os.path.basename(folder_path)}"
                     )
                 except Exception as e:
                     self.logger.error(f"Error in on_scan_finished: {e}")

@@ -20,15 +20,17 @@ from AppCode.core.output_monitor import OutputMonitor
 class ExecutionEngine(IExecutionEngine):
     """执行引擎实现"""
     
-    def __init__(self, logger=None, max_workers: int = 1):
+    def __init__(self, logger=None, max_workers: int = 1, config_manager=None):
         """初始化执行引擎
         
         Args:
             logger: 日志记录器
             max_workers: 最大并发执行数（车载ECU测试必须为1，硬件资源独占）
+            config_manager: 配置管理器
         """
         self.logger = logger
         self.max_workers = 1  # 强制设置为1，确保顺序执行
+        self.config_manager = config_manager
         self._executions = {}  # execution_id -> execution_info
         self._processes = {}   # execution_id -> subprocess.Popen
         self._threads = {}     # execution_id -> threading.Thread
@@ -38,6 +40,15 @@ class ExecutionEngine(IExecutionEngine):
         self._running = False
         self._paused_executions = set()  # 新增：暂停的执行ID集合
         self._pause_lock = threading.Lock()  # 新增：暂停操作锁
+        
+        # 从配置读取超时时间，默认3600秒（1小时）
+        if config_manager:
+            self._timeout = config_manager.get('execution.script_timeout', 3600)
+        else:
+            self._timeout = 3600
+        
+        if self.logger:
+            self.logger.info(f"ExecutionEngine initialized with timeout: {self._timeout}s")
     
     def execute_script(
         self,
@@ -212,6 +223,57 @@ class ExecutionEngine(IExecutionEngine):
         if self.logger:
             self.logger.info(f"Execution cancelled (no process): {execution_id}")
         return True
+    
+    def skip_current_script(self, execution_id: str) -> bool:
+        """跳过当前正在执行的脚本，立即执行下一条（修复版 - 避免死锁）
+        
+        Args:
+            execution_id: 执行ID（可以是单个脚本ID或批次ID）
+            
+        Returns:
+            是否成功跳过
+        """
+        # 第一步：在锁内查找需要跳过的执行ID
+        exec_id_to_skip = None
+        
+        with self._lock:
+            if execution_id not in self._executions:
+                if self.logger:
+                    self.logger.warning(f"Skip failed: execution not found: {execution_id}")
+                return False
+            
+            execution_info = self._executions[execution_id]
+            
+            # 如果是批次执行，找到当前正在运行的脚本
+            if 'execution_ids' in execution_info:
+                for exec_id in execution_info['execution_ids']:
+                    if exec_id in self._executions:
+                        exec_info = self._executions[exec_id]
+                        if exec_info['status'] == ExecutionStatus.RUNNING:
+                            # 找到正在运行的脚本
+                            exec_id_to_skip = exec_id
+                            break
+                
+                if not exec_id_to_skip:
+                    if self.logger:
+                        self.logger.warning(f"Skip failed: no running script in batch: {execution_id}")
+                    return False
+            else:
+                # 单个脚本执行
+                if execution_info['status'] != ExecutionStatus.RUNNING:
+                    if self.logger:
+                        self.logger.warning(f"Skip failed: script not running: {execution_id}")
+                    return False
+                
+                exec_id_to_skip = execution_id
+        
+        # 第二步：在锁外取消找到的执行（避免死锁）
+        if exec_id_to_skip:
+            if self.logger:
+                self.logger.info(f"Skipping execution: {exec_id_to_skip}")
+            return self._cancel_single_execution(exec_id_to_skip)
+        
+        return False
     
     def _terminate_process_safe(self, process, execution_id: str):
         """安全地终止进程
@@ -751,6 +813,8 @@ class ExecutionEngine(IExecutionEngine):
             stderr_lines = []
             timeout = getattr(self, '_timeout', 3600)
             start_time = time.time()
+            no_output_count = 0  # 连续无输出计数
+            max_no_output = 100  # 最大连续无输出次数（1秒）
             
             while True:
                 # 检查超时
@@ -781,6 +845,9 @@ class ExecutionEngine(IExecutionEngine):
                         process.kill()
                     break
                 
+                # 先检查进程是否已经结束
+                poll_result = process.poll()
+                
                 # 读取stdout（二进制模式）
                 line_bytes = process.stdout.readline()
                 if line_bytes:
@@ -790,9 +857,12 @@ class ExecutionEngine(IExecutionEngine):
                     
                     # 更新进度（简单估算）
                     execution_info['progress'] = min(90, len(execution_info['output']) * 2)
+                    no_output_count = 0  # 重置无输出计数
+                else:
+                    no_output_count += 1
                 
-                # 检查进程是否结束
-                if process.poll() is not None:
+                # 如果进程已结束，读取所有剩余输出后退出
+                if poll_result is not None:
                     # 读取剩余输出
                     remaining_bytes = process.stdout.read()
                     if remaining_bytes:
@@ -808,7 +878,31 @@ class ExecutionEngine(IExecutionEngine):
                         stderr_output = smart_decode(stderr_bytes)
                         stderr_lines = stderr_output.strip().split('\n')
                     
+                    if self.logger:
+                        self.logger.info(f"Process ended with return code: {poll_result} for {execution_id}")
                     break
+                
+                # 如果长时间没有输出且进程状态未知，主动检查进程状态
+                if no_output_count >= max_no_output:
+                    poll_result = process.poll()
+                    if poll_result is not None:
+                        if self.logger:
+                            self.logger.info(f"Process detected as ended (no output) with return code: {poll_result} for {execution_id}")
+                        # 读取所有剩余输出
+                        remaining_bytes = process.stdout.read()
+                        if remaining_bytes:
+                            remaining = smart_decode(remaining_bytes)
+                            for line in remaining.split('\n'):
+                                if line.strip():
+                                    with self._lock:
+                                        execution_info['output'].append(line.rstrip())
+                        
+                        stderr_bytes = process.stderr.read()
+                        if stderr_bytes:
+                            stderr_output = smart_decode(stderr_bytes)
+                            stderr_lines = stderr_output.strip().split('\n')
+                        break
+                    no_output_count = 0  # 重置计数
                 
                 # 短暂休眠避免CPU占用过高
                 time.sleep(0.01)

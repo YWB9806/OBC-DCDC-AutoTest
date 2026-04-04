@@ -132,7 +132,7 @@ class ConfigurationError(AppBaseException):
 
 # ============ 权限相关异常 ============
 
-class PermissionError(AppBaseException):
+class AppPermissionError(AppBaseException):
     """权限错误"""
     
     def __init__(self, user_id: str, permission: str):

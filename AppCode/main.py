@@ -43,8 +43,8 @@ def main():
     # 设置当前用户并应用权限
     main_window.set_current_user(login_result)
     
-    # 显示主窗口
-    main_window.show()
+    # 显示主窗口（全屏显示）
+    main_window.showMaximized()
     
     # 运行应用
     sys.exit(app.exec_())

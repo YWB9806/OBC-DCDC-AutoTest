@@ -4,11 +4,15 @@
 """
 
 import time
+import threading
 import functools
+import logging
 from typing import Callable, Any
 from datetime import datetime
 
-from .exceptions import PermissionError, ValidationError
+from .exceptions import AppPermissionError, ValidationError
+
+_logger = logging.getLogger(__name__)
 
 
 def timer(func: Callable) -> Callable:
@@ -27,7 +31,7 @@ def timer(func: Callable) -> Callable:
         result = func(*args, **kwargs)
         end_time = time.time()
         duration = end_time - start_time
-        print(f"[TIMER] {func.__name__} took {duration:.4f} seconds")
+        _logger.debug(f"[TIMER] {func.__name__} took {duration:.4f} seconds")
         return result
     return wrapper
 
@@ -59,10 +63,10 @@ def retry(max_attempts: int = 3, delay: float = 1.0,
                 except exceptions as e:
                     last_exception = e
                     if attempt < max_attempts - 1:
-                        print(f"[RETRY] Attempt {attempt + 1} failed, retrying in {delay}s...")
+                        _logger.warning(f"[RETRY] Attempt {attempt + 1} failed, retrying in {delay}s...")
                         time.sleep(delay)
                     else:
-                        print(f"[RETRY] All {max_attempts} attempts failed")
+                        _logger.warning(f"[RETRY] All {max_attempts} attempts failed")
             raise last_exception
         return wrapper
     return decorator
@@ -127,7 +131,7 @@ def require_permission(permission: str) -> Callable:
             # 假设self有permission_manager属性
             if hasattr(self, 'permission_manager'):
                 if not self.permission_manager.check_permission(user_id, permission):
-                    raise PermissionError(user_id, permission)
+                    raise AppPermissionError(user_id, permission)
             return func(self, user_id, *args, **kwargs)
         return wrapper
     return decorator
@@ -148,21 +152,31 @@ def cache_result(ttl: int = 3600) -> Callable:
     """
     def decorator(func: Callable) -> Callable:
         cache = {}
-        
+        call_count = [0]
+
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             # 创建缓存键
             key = str(args) + str(kwargs)
-            
+
             # 检查缓存
             if key in cache:
                 result, timestamp = cache[key]
                 if time.time() - timestamp < ttl:
                     return result
-            
+
             # 执行函数并缓存结果
             result = func(*args, **kwargs)
             cache[key] = (result, time.time())
+
+            # 定期清理过期缓存条目
+            call_count[0] += 1
+            if call_count[0] % 100 == 0:
+                now = time.time()
+                expired = [k for k, (_, ts) in cache.items() if now - ts >= ttl]
+                for k in expired:
+                    del cache[k]
+
             return result
         
         # 添加清除缓存的方法
@@ -206,22 +220,25 @@ def log_execution(logger=None) -> Callable:
 
 def singleton(cls):
     """单例装饰器
-    
+
     确保类只有一个实例。
-    
+
     Example:
         @singleton
         class ConfigManager:
             pass
     """
     instances = {}
-    
+    lock = threading.Lock()
+
     @functools.wraps(cls)
     def get_instance(*args, **kwargs):
         if cls not in instances:
-            instances[cls] = cls(*args, **kwargs)
+            with lock:
+                if cls not in instances:
+                    instances[cls] = cls(*args, **kwargs)
         return instances[cls]
-    
+
     return get_instance
 
 
@@ -244,7 +261,7 @@ def deprecated(message: str = None) -> Callable:
             warning_msg = f"Function {func.__name__} is deprecated"
             if message:
                 warning_msg += f": {message}"
-            print(f"[WARNING] {warning_msg}")
+            _logger.warning(warning_msg)
             return func(*args, **kwargs)
         return wrapper
     return decorator

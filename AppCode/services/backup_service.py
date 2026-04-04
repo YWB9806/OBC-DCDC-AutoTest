@@ -3,6 +3,7 @@
 提供数据库备份和恢复功能。
 """
 
+import ast
 import os
 import shutil
 import zipfile
@@ -212,7 +213,7 @@ class BackupService:
                         with zipfile.ZipFile(filepath, 'r') as zipf:
                             if 'metadata.txt' in zipf.namelist():
                                 metadata_str = zipf.read('metadata.txt').decode('utf-8')
-                                metadata = eval(metadata_str)
+                                metadata = ast.literal_eval(metadata_str)
                                 description = metadata.get('description', '')
                     except Exception:
                         pass
@@ -296,7 +297,7 @@ class BackupService:
                 with zipfile.ZipFile(backup_path, 'r') as zipf:
                     if 'metadata.txt' in zipf.namelist():
                         metadata_str = zipf.read('metadata.txt').decode('utf-8')
-                        metadata = eval(metadata_str)
+                        metadata = ast.literal_eval(metadata_str)
                         description = metadata.get('description', '')
                         db_size = metadata.get('db_size', 0)
             except Exception:

@@ -150,16 +150,34 @@ class BaseRepository(ABC):
     
     def count(self, conditions: Optional[Dict[str, Any]] = None) -> int:
         """统计记录数
-        
+
         Args:
             conditions: 查询条件
-            
+
         Returns:
             记录数
         """
-        conditions = conditions or {}
-        records = self.query(conditions)
-        return len(records)
+        table_name = self.get_table_name()
+
+        try:
+            if conditions:
+                where_parts = []
+                params = []
+                for key, value in conditions.items():
+                    where_parts.append(f"{key} = ?")
+                    params.append(value)
+                where_clause = " AND ".join(where_parts)
+                sql = f"SELECT COUNT(*) as cnt FROM {table_name} WHERE {where_clause}"
+            else:
+                sql = f"SELECT COUNT(*) as cnt FROM {table_name}"
+                params = []
+
+            rows = self.db.execute_query(sql, tuple(params))
+            return rows[0]['cnt'] if rows else 0
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"Failed to count records in {table_name}: {e}")
+            return 0
     
     def exists(self, record_id: str) -> bool:
         """检查记录是否存在

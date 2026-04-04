@@ -24,8 +24,8 @@ from version import (
 class UpdateService:
     """更新检查服务"""
     
-    def __init__(self):
-        self.logger = logging.getLogger(__name__)
+    def __init__(self, logger=None):
+        self.logger = logger or logging.getLogger(__name__)
         self._last_check_time: Optional[datetime] = None
         self._cached_update_info: Optional[Dict[str, Any]] = None
         self._check_interval = UPDATE_CONFIG.get('check_interval', 86400)
@@ -224,37 +224,3 @@ def get_update_service() -> UpdateService:
     if _update_service_instance is None:
         _update_service_instance = UpdateService()
     return _update_service_instance
-
-
-if __name__ == "__main__":
-    # 测试代码
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-    
-    print("=" * 60)
-    print("更新服务测试")
-    print("=" * 60)
-    
-    service = get_update_service()
-    
-    # 获取当前版本信息
-    print("\n当前版本信息:")
-    current_info = service.get_current_version_info()
-    for key, value in current_info.items():
-        print(f"  {key}: {value}")
-    
-    # 检查更新
-    print("\n检查更新...")
-    update_info = service.check_for_updates(force=True)
-    
-    if update_info:
-        print("\n更新信息:")
-        for key, value in update_info.items():
-            if key == 'release_notes' and len(str(value)) > 100:
-                print(f"  {key}: {str(value)[:100]}...")
-            else:
-                print(f"  {key}: {value}")
-    else:
-        print("\n无法获取更新信息")

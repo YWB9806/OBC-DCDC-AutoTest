@@ -1,0 +1,9 @@
+{
+  "name": "标准测试报告",
+  "title": "测试执行报告 - {{suite_name}}",
+  "headers": [
+    "测试方案",
+    "通过"
+  ],
+  "notes": "报告生成时间：{{generated_at}}"
+}

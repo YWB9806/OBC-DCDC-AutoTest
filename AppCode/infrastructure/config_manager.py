@@ -4,20 +4,22 @@
 """
 
 import json
+import logging
 import os
 from typing import Any, Optional
 
 
 class ConfigManager:
     """配置管理器"""
-    
-    def __init__(self, config_file: str = 'config.json'):
+
+    def __init__(self, config_file: str = 'config.json', logger=None):
         """初始化配置管理器
         
         Args:
             config_file: 配置文件路径
         """
         self.config_file = config_file
+        self.logger = logger or logging.getLogger(__name__)
         self._config = self._load_config()
     
     def _load_config(self) -> dict:
@@ -48,7 +50,7 @@ class ConfigManager:
                     user_config = json.load(f)
                     default_config.update(user_config)
             except Exception as e:
-                print(f"Failed to load config file: {e}")
+                self.logger.error(f"Failed to load config file: {e}")
         
         return default_config
     
@@ -96,7 +98,7 @@ class ConfigManager:
             with open(self.config_file, 'w', encoding='utf-8') as f:
                 json.dump(self._config, f, indent=2, ensure_ascii=False)
         except Exception as e:
-            print(f"Failed to save config file: {e}")
+            self.logger.error(f"Failed to save config file: {e}")
     
     def get_all(self) -> dict:
         """获取所有配置

@@ -7,7 +7,8 @@ import os
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QTabWidget, QStatusBar, QMenuBar,
-    QMenu, QAction, QToolBar, QMessageBox
+    QMenu, QAction, QToolBar, QMessageBox, QFileDialog,
+    QSystemTrayIcon
 )
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QIcon
@@ -16,11 +17,9 @@ from .script_browser import ScriptBrowser
 from .execution_panel import ExecutionPanel
 from .execution_queue_panel import ExecutionQueuePanel
 from .result_viewer import ResultViewer
-from .dashboard import Dashboard
-from .performance_panel import PerformancePanel
 from .backup_panel import BackupPanel
+from .report_panel import ReportPanel
 from .user_panel import UserPanel
-from .plugin_panel import PluginPanel
 from AppCode.ui.update_dialog import show_update_dialog
 from PyQt5.QtCore import QTimer
 
@@ -48,7 +47,6 @@ class MainWindow(QMainWindow):
         self.script_service = container.resolve('script_service')
         self.execution_service = container.resolve('execution_service')
         self.analysis_service = container.resolve('analysis_service')
-        self.performance_monitor_service = container.resolve('performance_monitor_service')
         self.backup_service = container.resolve('backup_service')
         self.user_service = container.resolve('user_service')
         self.plugin_manager = container.resolve('plugin_manager')
@@ -130,27 +128,19 @@ class MainWindow(QMainWindow):
         # 结果查看器（需要权限）
         self.result_viewer = ResultViewer(self.container)
         self.result_tab_index = self.tab_widget.addTab(self.result_viewer, "执行结果")
-        
-        # 统计仪表板（开发版本隐藏）
-        # self.dashboard = Dashboard(self.container)
-        # self.tab_widget.addTab(self.dashboard, "统计分析")
-        
-        # 性能监控面板（开发版本隐藏）
-        # self.performance_panel = PerformancePanel(self.container, self)
-        # self.tab_widget.addTab(self.performance_panel, "性能监控")
-        
-        # 备份管理面板（开发版本隐藏）
-        # self.backup_panel = BackupPanel(self.container, self)
-        # self.tab_widget.addTab(self.backup_panel, "数据备份")
-        
+
+        # 备份管理面板
+        self.backup_panel = BackupPanel(self.container, self)
+        self.tab_widget.addTab(self.backup_panel, "数据备份")
+
+        # 报告面板
+        self.report_panel = ReportPanel(self.container, self)
+        self.tab_widget.addTab(self.report_panel, "测试报告")
+
         # 用户管理面板（仅超级管理员可见）
         self.user_panel = UserPanel(self.container, self)
         self.user_tab_index = self.tab_widget.addTab(self.user_panel, "用户管理")
-        
-        # 插件管理面板 - 注意：PluginPanel使用tkinter，暂时跳过
-        # self.plugin_panel = PluginPanel(self, self.plugin_manager)
-        # self.tab_widget.addTab(self.plugin_panel, "插件管理")
-        
+
         self.main_splitter.addWidget(self.tab_widget)
         
         # 设置分割器初始大小（像素）- 两栏布局
@@ -227,26 +217,18 @@ class MainWindow(QMainWindow):
         
         # 视图菜单
         view_menu = menubar.addMenu("视图(&V)")
-        
-        dashboard_action = QAction("统计仪表板(&D)", self)
-        dashboard_action.triggered.connect(lambda: self.tab_widget.setCurrentIndex(2))
-        view_menu.addAction(dashboard_action)
-        
-        performance_action = QAction("性能监控(&P)", self)
-        performance_action.triggered.connect(lambda: self.tab_widget.setCurrentIndex(3))
-        view_menu.addAction(performance_action)
-        
+
         backup_action = QAction("数据备份(&B)", self)
-        backup_action.triggered.connect(lambda: self.tab_widget.setCurrentIndex(4))
+        backup_action.triggered.connect(lambda: self.tab_widget.setCurrentIndex(3))
         view_menu.addAction(backup_action)
-        
+
+        report_action = QAction("报告(&R)", self)
+        report_action.triggered.connect(lambda: self.tab_widget.setCurrentIndex(4))
+        view_menu.addAction(report_action)
+
         user_action = QAction("用户管理(&U)", self)
         user_action.triggered.connect(lambda: self.tab_widget.setCurrentIndex(5))
         view_menu.addAction(user_action)
-        
-        plugin_action = QAction("插件管理(&L)", self)
-        plugin_action.triggered.connect(lambda: self.tab_widget.setCurrentIndex(6))
-        view_menu.addAction(plugin_action)
         
         # 工具菜单
         tools_menu = menubar.addMenu("工具(&T)")
@@ -270,70 +252,36 @@ class MainWindow(QMainWindow):
         help_menu.addAction(about_action)
     
     def _create_tool_bar(self):
-        """创建工具栏"""
-        toolbar = QToolBar("主工具栏")
-        toolbar.setMovable(False)
-        self.addToolBar(toolbar)
-        
-        # 刷新按钮
-        refresh_action = QAction("刷新", self)
-        refresh_action.setToolTip("刷新脚本列表 (F5)")
-        refresh_action.triggered.connect(self._on_refresh_scripts)
-        toolbar.addAction(refresh_action)
-        
-        toolbar.addSeparator()
-        
-        # 执行按钮
+        """创建工具栏（精简版 - 所有执行控制按钮已移到执行面板）"""
+        # 不再创建工具栏，所有控制按钮都在执行面板中
+        # 保留这些 action 的引用（用于状态更新）
         self.start_action = QAction("开始执行", self)
-        self.start_action.setToolTip("开始执行选中的脚本 (F9)")
-        self.start_action.triggered.connect(self._on_start_execution)
-        toolbar.addAction(self.start_action)
-        
         self.stop_action = QAction("停止执行", self)
-        self.stop_action.setToolTip("停止当前执行 (Shift+F9)")
-        self.stop_action.setEnabled(False)
-        self.stop_action.triggered.connect(self._on_stop_execution)
-        toolbar.addAction(self.stop_action)
-        
         self.pause_action = QAction("暂停", self)
-        self.pause_action.setToolTip("暂停执行 (F10)")
-        self.pause_action.setEnabled(False)
-        self.pause_action.triggered.connect(self._on_pause_execution)
-        toolbar.addAction(self.pause_action)
-        
         self.resume_action = QAction("继续", self)
-        self.resume_action.setToolTip("继续执行 (F11)")
-        self.resume_action.setEnabled(False)
-        self.resume_action.triggered.connect(self._on_resume_execution)
-        toolbar.addAction(self.resume_action)
-        
-        toolbar.addSeparator()
-        
-        # 重试和跳过按钮
-        self.retry_action = QAction("重试失败", self)
-        self.retry_action.setToolTip("重新执行失败的脚本")
-        self.retry_action.triggered.connect(self._on_retry_failed)
-        toolbar.addAction(self.retry_action)
-        
         self.skip_action = QAction("跳过当前", self)
-        self.skip_action.setToolTip("跳过当前正在执行的脚本 (Ctrl+K)")
+        self.retry_action = QAction("重试失败", self)
+
+        # 设置初始状态
+        self.start_action.setEnabled(True)
+        self.stop_action.setEnabled(False)
+        self.pause_action.setEnabled(False)
+        self.resume_action.setEnabled(False)
         self.skip_action.setEnabled(False)
-        self.skip_action.triggered.connect(self._on_skip_current)
-        toolbar.addAction(self.skip_action)
-        
-        toolbar.addSeparator()
-        
-        # 导出按钮
-        export_action = QAction("导出报告", self)
-        export_action.setToolTip("导出执行报告")
-        export_action.triggered.connect(self._on_export_report)
-        toolbar.addAction(export_action)
     
     def _create_status_bar(self):
         """创建状态栏"""
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("就绪")
+
+        # 系统托盘图标（用于桌面通知）
+        if QSystemTrayIcon.isSystemTrayAvailable():
+            self._tray_icon = QSystemTrayIcon(self)
+            self._tray_icon.setIcon(self.windowIcon())
+            self._tray_icon.show()
+        else:
+            self._tray_icon = None
     
     def _connect_signals(self):
         """连接信号和槽"""
@@ -351,7 +299,14 @@ class MainWindow(QMainWindow):
         self.execution_panel.execution_finished.connect(self._on_execution_finished)
         self.execution_panel.execution_paused.connect(self._on_execution_paused)
         self.execution_panel.execution_resumed.connect(self._on_execution_resumed)
-        
+
+        # 执行面板控制按钮信号
+        self.execution_panel.refresh_requested.connect(self._on_refresh_scripts)
+        self.execution_panel.start_requested.connect(self._on_execute_queue)
+        self.execution_panel.stop_requested.connect(self._on_stop_execution)
+        self.execution_panel.pause_requested.connect(self._on_pause_execution)
+        self.execution_panel.resume_requested.connect(self._on_resume_execution)
+
         # 结果查看器信号
         self.result_viewer.result_selected.connect(self._on_result_selected)
     
@@ -524,7 +479,8 @@ class MainWindow(QMainWindow):
         """打开设置对话框"""
         try:
             from .settings_dialog import SettingsDialog
-            dialog = SettingsDialog(self)
+            config_manager = self.container.resolve('config_manager')
+            dialog = SettingsDialog(self, config_manager)
             if dialog.exec_():
                 self.logger.info("Settings saved")
                 self.status_bar.showMessage("设置已保存", 3000)
@@ -563,13 +519,92 @@ class MainWindow(QMainWindow):
     
     def _on_export_report(self):
         """导出报告"""
+        file_path, selected_filter = QFileDialog.getSaveFileName(
+            self, "导出报告", "execution_report",
+            "HTML Files (*.html);;CSV Files (*.csv)"
+        )
+
+        if not file_path:
+            return
+
         try:
-            # 切换到统计仪表板
-            self.tab_widget.setCurrentIndex(2)
-            self.dashboard.export_report()
+            if selected_filter.startswith("HTML"):
+                self._export_report_html(file_path)
+            else:
+                self._export_report_csv(file_path)
+
+            QMessageBox.information(self, "成功", f"报告已导出到:\n{file_path}")
         except Exception as e:
             self.logger.error(f"Failed to export report: {e}")
-            QMessageBox.critical(self, "错误", f"导出报告失败: {e}")
+            QMessageBox.critical(self, "错误", f"导出报告失败:\n{e}")
+
+    def _export_report_html(self, file_path: str):
+        """导出HTML格式报告"""
+        import html as html_mod
+        history_repo = self.container.resolve('execution_history_repository')
+        records = history_repo.get_recent(100)
+
+        rows_html = ""
+        for r in records:
+            status = r.get('status', '')
+            color = "#4CAF50" if status == "SUCCESS" else "#F44336" if status == "FAILED" else "#FF9800"
+            rows_html += f"""<tr>
+                <td>{html_mod.escape(r.get('script_path', ''))}</td>
+                <td style="color:{color};font-weight:bold">{html_mod.escape(status)}</td>
+                <td>{html_mod.escape(r.get('start_time', ''))}</td>
+                <td>{html_mod.escape(str(r.get('duration', '')))}</td>
+                <td>{html_mod.escape(r.get('executed_by', ''))}</td>
+            </tr>"""
+
+        html_content = f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>执行报告</title>
+<style>
+body {{ font-family: "Microsoft YaHei", sans-serif; margin: 20px; }}
+h1 {{ color: #333; }}
+table {{ border-collapse: collapse; width: 100%; margin-top: 15px; }}
+th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+th {{ background-color: #2196F3; color: white; }}
+tr:nth-child(even) {{ background-color: #f2f2f2; }}
+.info {{ color: #666; margin-bottom: 10px; }}
+</style>
+</head>
+<body>
+<h1>Python脚本执行报告</h1>
+<p class="info">生成时间: {html_mod.escape(str(__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M:%S')))}
+&nbsp;&nbsp;共 {len(records)} 条记录</p>
+<table>
+<thead><tr><th>脚本路径</th><th>状态</th><th>执行时间</th><th>耗时(秒)</th><th>执行者</th></tr></thead>
+<tbody>
+{rows_html}
+</tbody>
+</table>
+</body>
+</html>"""
+
+        with open(file_path, 'w', encoding='utf-8') as f:
+            f.write(html_content)
+
+    def _export_report_csv(self, file_path: str):
+        """导出CSV格式报告"""
+        import csv
+        history_repo = self.container.resolve('execution_history_repository')
+        records = history_repo.get_recent(500)
+
+        with open(file_path, 'w', encoding='utf-8-sig', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(['脚本路径', '状态', '开始时间', '结束时间', '耗时(秒)', '执行者'])
+            for r in records:
+                writer.writerow([
+                    r.get('script_path', ''),
+                    r.get('status', ''),
+                    r.get('start_time', ''),
+                    r.get('end_time', ''),
+                    r.get('duration', ''),
+                    r.get('executed_by', '')
+                ])
     
     def _on_script_selected(self, script_path: str):
         """脚本被选中"""
@@ -584,52 +619,71 @@ class MainWindow(QMainWindow):
     def _on_execution_started(self, execution_id: str):
         """执行开始"""
         self.status_bar.showMessage(f"执行已开始: {execution_id}")
-        
+
         # 更新工具栏按钮状态
         self.start_action.setEnabled(False)   # 禁用开始按钮
         self.stop_action.setEnabled(True)     # 启用停止按钮
         self.pause_action.setEnabled(True)    # 启用暂停按钮
         self.resume_action.setEnabled(False)  # 禁用继续按钮（执行开始时）
         self.skip_action.setEnabled(True)     # 启用跳过按钮
-    
+
+        # 更新执行面板按钮状态
+        self.execution_panel.set_button_states(is_executing=True, is_paused=False)
+
     def _on_execution_finished(self, execution_id: str, success: bool):
         """执行完成"""
         status = "成功" if success else "失败"
         self.status_bar.showMessage(f"执行{status}: {execution_id}", 5000)
-        
+
         # 更新工具栏按钮状态
         self.start_action.setEnabled(True)    # 启用开始按钮
         self.stop_action.setEnabled(False)    # 禁用停止按钮
         self.pause_action.setEnabled(False)   # 禁用暂停按钮
         self.resume_action.setEnabled(False)  # 禁用继续按钮
         self.skip_action.setEnabled(False)    # 禁用跳过按钮
-        
+
+        # 更新执行面板按钮状态
+        self.execution_panel.set_button_states(is_executing=False, is_paused=False)
+
+        # 窗口非活动时发送系统通知
+        if self._tray_icon and not self.isActiveWindow():
+            icon_type = QSystemTrayIcon.Information if success else QSystemTrayIcon.Critical
+            self._tray_icon.showMessage(
+                "脚本执行完成",
+                f"执行{status}: {execution_id}",
+                icon_type,
+                5000
+            )
+
         # 刷新结果查看器（如果有权限）
         if self.can_view_results:
             self.result_viewer.refresh()
-        
-        # 刷新统计仪表板（开发版本已隐藏）
-        # self.dashboard.refresh()
-    
+
     def _on_execution_paused(self, execution_id: str):
         """执行暂停"""
         self.status_bar.showMessage(f"执行已暂停: {execution_id}", 3000)
-        
+
         # 更新工具栏按钮状态
         self.pause_action.setEnabled(False)   # 禁用暂停按钮
         self.resume_action.setEnabled(True)   # 启用继续按钮
         self.stop_action.setEnabled(True)     # 保持停止按钮启用
-        
+
+        # 更新执行面板按钮状态
+        self.execution_panel.set_button_states(is_executing=True, is_paused=True)
+
         self.logger.info(f"Execution paused: {execution_id}, resume button enabled")
-    
+
     def _on_execution_resumed(self, execution_id: str):
         """执行恢复"""
         self.status_bar.showMessage(f"执行已恢复: {execution_id}", 3000)
-        
+
         # 更新工具栏按钮状态
         self.pause_action.setEnabled(True)    # 启用暂停按钮
         self.resume_action.setEnabled(False)  # 禁用继续按钮
         self.stop_action.setEnabled(True)     # 保持停止按钮启用
+
+        # 更新执行面板按钮状态
+        self.execution_panel.set_button_states(is_executing=True, is_paused=False)
         
         self.logger.info(f"Execution resumed: {execution_id}, pause button enabled")
     
@@ -723,21 +777,13 @@ class MainWindow(QMainWindow):
         
         # 根据权限控制标签页可见性
         if hasattr(self, 'tab_widget'):
-            # 执行结果标签页：根据权限显示/隐藏
+            tabs_to_remove = []
             if not self.can_view_results:
-                # 隐藏执行结果标签页
-                self.tab_widget.removeTab(self.result_tab_index)
-                self.logger.info("Result viewer tab hidden (no permission)")
-            else:
-                self.logger.info("Result viewer tab visible (has permission)")
-            
-            # 用户管理标签页：仅超级管理员可见
+                tabs_to_remove.append("执行结果")
             if not self.is_super_admin:
-                # 找到用户管理标签页的当前索引并移除
-                for i in range(self.tab_widget.count()):
-                    if self.tab_widget.tabText(i) == "用户管理":
-                        self.tab_widget.removeTab(i)
-                        self.logger.info("User management tab hidden (not super admin)")
-                        break
-            else:
-                self.logger.info("User management tab visible (super admin)")
+                tabs_to_remove.append("用户管理")
+
+            # 从后往前移除，避免索引偏移
+            for i in range(self.tab_widget.count() - 1, -1, -1):
+                if self.tab_widget.tabText(i) in tabs_to_remove:
+                    self.tab_widget.removeTab(i)

@@ -751,7 +751,7 @@ class ScriptBrowser(QWidget):
             # 确保信号重新连接
             try:
                 self.suite_combo.currentIndexChanged.disconnect(self._on_suite_changed)
-            except:
+            except Exception:
                 pass
             self.suite_combo.currentIndexChanged.connect(self._on_suite_changed)
     
@@ -821,14 +821,6 @@ class ScriptBrowser(QWidget):
         except Exception as e:
             self.logger.error(f"Error loading suite: {e}")
             QMessageBox.critical(self, "错误", f"加载方案失败: {e}")
-    
-    def get_current_suite(self):
-        """获取当前选择的测试方案
-        
-        Returns:
-            当前方案信息字典，如果未选择则返回None
-        """
-        return self._current_suite
     
     def _auto_load_missing_scripts(self, script_paths):
         """自动加载缺失的脚本（通过扫描其父目录）
@@ -1029,31 +1021,99 @@ class ScriptBrowser(QWidget):
         self._load_suites()
     
     def _on_suite_loaded_from_dialog(self, suite):
-        """从对话框加载方案"""
+        """从对话框加载方案（优化版 - 异步加载）"""
+        from PyQt5.QtWidgets import QProgressDialog
+        from PyQt5.QtCore import QThread, pyqtSignal, Qt
+        
         # 在下拉框中选择该方案（不显示提示消息，因为对话框已经显示过了）
         index = self.suite_combo.findData(suite['id'])
-        if index >= 0:
-            # 临时断开信号，避免触发_on_suite_changed
-            self.suite_combo.currentIndexChanged.disconnect(self._on_suite_changed)
-            self.suite_combo.setCurrentIndex(index)
-            # 手动调用，但不显示消息
-            self._on_suite_changed(index, show_message=False)
-            # 重新连接信号
-            self.suite_combo.currentIndexChanged.connect(self._on_suite_changed)
+        if index < 0:
+            return
+        
+        # 创建进度对话框
+        progress = QProgressDialog("正在加载方案...", None, 0, 0, self)
+        progress.setWindowTitle("加载中")
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(0)  # 立即显示
+        progress.setCancelButton(None)  # 不允许取消
+        progress.setValue(0)
+        progress.show()
+        
+        # 使用线程异步加载方案
+        class LoadSuiteThread(QThread):
+            finished = pyqtSignal(list, list)  # selected_scripts, script_info_list
+            error = pyqtSignal(str)
             
-            # 【Bug修复】自动将方案中的脚本添加到执行队列
-            selected_scripts = self.get_selected_scripts()
-            if selected_scripts:
-                # 获取脚本信息
-                script_info_list = []
-                for path in selected_scripts:
-                    info = self._get_script_info_by_path(path)
-                    if info:
-                        script_info_list.append(info)
+            def __init__(self, parent_widget, suite_data, suite_index):
+                super().__init__()
+                self.parent_widget = parent_widget
+                self.suite_data = suite_data
+                self.suite_index = suite_index
+            
+            def run(self):
+                try:
+                    # 临时断开信号，避免触发_on_suite_changed
+                    self.parent_widget.suite_combo.currentIndexChanged.disconnect(
+                        self.parent_widget._on_suite_changed
+                    )
+                    self.parent_widget.suite_combo.setCurrentIndex(self.suite_index)
+                    
+                    # 手动调用加载方案（不显示消息）
+                    self.parent_widget._on_suite_changed(self.suite_index, show_message=False)
+                    
+                    # 重新连接信号
+                    self.parent_widget.suite_combo.currentIndexChanged.connect(
+                        self.parent_widget._on_suite_changed
+                    )
+                    
+                    # 获取选中的脚本
+                    selected_scripts = self.parent_widget.get_selected_scripts()
+                    script_info_list = []
+                    
+                    if selected_scripts:
+                        # 获取脚本信息
+                        for path in selected_scripts:
+                            info = self.parent_widget._get_script_info_by_path(path)
+                            if info:
+                                script_info_list.append(info)
+                    
+                    self.finished.emit(selected_scripts, script_info_list)
                 
-                # 触发添加到队列的信号
-                self.add_to_queue_requested.emit(selected_scripts, script_info_list)
-                self.logger.info(f"Auto-added {len(selected_scripts)} scripts from suite '{suite['name']}' to execution queue")
+                except Exception as e:
+                    self.error.emit(str(e))
+        
+        # 保持线程引用
+        self._load_suite_thread = LoadSuiteThread(self, suite, index)
+        
+        def on_load_finished(selected_scripts, script_info_list):
+            try:
+                progress.close()
+                
+                if selected_scripts:
+                    # 触发添加到队列的信号
+                    self.add_to_queue_requested.emit(selected_scripts, script_info_list)
+                    self.logger.info(f"Auto-added {len(selected_scripts)} scripts from suite '{suite['name']}' to execution queue")
+            
+            except Exception as e:
+                self.logger.error(f"Error in on_load_finished: {e}")
+            finally:
+                self._load_suite_thread = None
+        
+        def on_load_error(error_msg):
+            try:
+                progress.close()
+                QMessageBox.critical(self, "错误", f"加载方案失败: {error_msg}")
+            except Exception as e:
+                self.logger.error(f"Error in on_load_error: {e}")
+            finally:
+                self._load_suite_thread = None
+        
+        # 连接信号
+        self._load_suite_thread.finished.connect(on_load_finished)
+        self._load_suite_thread.error.connect(on_load_error)
+        
+        # 启动线程
+        self._load_suite_thread.start()
     
     def get_current_suite(self):
         """获取当前选择的测试方案

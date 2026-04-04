@@ -414,7 +414,7 @@ class ExecutionService:
         elif start_date and end_date:
             results = self.execution_repo.get_by_date_range(start_date, end_date)
         else:
-            results = self.execution_repo.get_recent(100)
+            results = self.execution_repo.get_recent(1000)
         
         # 应用状态过滤
         if status:

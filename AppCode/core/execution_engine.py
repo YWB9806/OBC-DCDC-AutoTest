@@ -12,7 +12,7 @@ from datetime import datetime
 import psutil  # 用于进程暂停/恢复
 
 from AppCode.interfaces.i_execution_engine import IExecutionEngine
-from AppCode.utils.constants import ExecutionStatus
+from AppCode.utils.constants import ExecutionStatus, DEFAULT_TIMEOUT
 from AppCode.utils.exceptions import ExecutionError
 from AppCode.core.output_monitor import OutputMonitor
 
@@ -30,6 +30,10 @@ class ExecutionEngine(IExecutionEngine):
         """
         self.logger = logger
         self.max_workers = 1  # 强制设置为1，确保顺序执行
+        if max_workers != 1 and self.logger:
+            self.logger.warning(
+                f"max_workers={max_workers} ignored, forcing sequential execution (max_workers=1) for ECU safety"
+            )
         self.config_manager = config_manager
         self._executions = {}  # execution_id -> execution_info
         self._processes = {}   # execution_id -> subprocess.Popen
@@ -43,9 +47,9 @@ class ExecutionEngine(IExecutionEngine):
         
         # 从配置读取超时时间，默认3600秒（1小时）
         if config_manager:
-            self._timeout = config_manager.get('execution.script_timeout', 3600)
+            self._timeout = config_manager.get('execution.script_timeout', DEFAULT_TIMEOUT)
         else:
-            self._timeout = 3600
+            self._timeout = DEFAULT_TIMEOUT
         
         if self.logger:
             self.logger.info(f"ExecutionEngine initialized with timeout: {self._timeout}s")
@@ -276,47 +280,98 @@ class ExecutionEngine(IExecutionEngine):
         return False
     
     def _terminate_process_safe(self, process, execution_id: str):
-        """安全地终止进程
-        
+        """安全地终止进程（增强版 - 支持暂停状态的进程）
+
         Args:
             process: 进程对象
             execution_id: 执行ID
         """
         try:
-            # 首先尝试温和终止
-            process.terminate()
+            # 首先检查进程是否已结束
+            if process.poll() is not None:
+                if self.logger:
+                    self.logger.info(f"Process already ended: {execution_id}")
+                return
+
+            # 尝试使用 psutil 恢复进程（如果被暂停）然后再终止
             try:
+                parent = psutil.Process(process.pid)
+                # 检查进程是否被暂停，如果是则先恢复
+                if parent.status() == psutil.STATUS_STOPPED:
+                    if self.logger:
+                        self.logger.info(f"Process is stopped, resuming before terminate: {execution_id}")
+                    try:
+                        parent.resume()
+                        time.sleep(0.1)  # 等待恢复
+                    except Exception as e:
+                        if self.logger:
+                            self.logger.warning(f"Failed to resume process: {e}")
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass  # 进程不存在或无权限，继续尝试终止
+
+            # 首先尝试温和终止
+            try:
+                process.terminate()
                 process.wait(timeout=1)  # 减少超时时间到1秒
                 if self.logger:
                     self.logger.info(f"Process terminated gracefully: {execution_id}")
                 return
             except subprocess.TimeoutExpired:
                 pass
-            
-            # 温和终止失败，强制杀死
+            except Exception as e:
+                if self.logger:
+                    self.logger.debug(f"Terminate failed: {e}")
+
+            # 温和终止失败，使用 psutil 强制杀死进程树
             if self.logger:
-                self.logger.warning(f"Process did not terminate, killing: {execution_id}")
-            process.kill()
-            
+                self.logger.warning(f"Process did not terminate, force killing process tree: {execution_id}")
+
+            try:
+                parent = psutil.Process(process.pid)
+                # 先杀死所有子进程
+                children = parent.children(recursive=True)
+                for child in children:
+                    try:
+                        child.kill()
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass
+                # 再杀死主进程
+                parent.kill()
+                if self.logger:
+                    self.logger.info(f"Killed process tree for PID {process.pid}")
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                # psutil 失败，使用 process.kill()
+                try:
+                    process.kill()
+                except Exception:
+                    pass
+
             try:
                 process.wait(timeout=1)
             except subprocess.TimeoutExpired:
-                # 最后的尝试：使用系统命令
+                # 最后的尝试：使用 Windows taskkill 命令
                 import platform
                 if platform.system() == 'Windows':
                     try:
-                        import os
-                        os.system(f'taskkill /F /T /PID {process.pid} >nul 2>&1')
+                        # /F 强制终止 /T 终止进程树
+                        subprocess.run(['taskkill', '/F', '/T', '/PID', str(process.pid)],
+                                       capture_output=True, timeout=5)
                         if self.logger:
                             self.logger.info(f"Used taskkill for PID {process.pid}")
+                        # 等待进程结束
+                        try:
+                            process.wait(timeout=1)
+                        except Exception:
+                            pass
                     except Exception as e:
                         if self.logger:
                             self.logger.warning(f"taskkill failed: {e}")
-        
+
         except Exception as e:
             if self.logger:
                 self.logger.error(f"Error terminating process: {e}")
-            raise
+            # 不再抛出异常，确保方法能正常返回
+            # raise
     
     def get_execution_status(self, execution_id: str) -> Dict[str, Any]:
         """获取执行状态
@@ -809,103 +864,137 @@ class ExecutionEngine(IExecutionEngine):
                 # 如果都失败，使用UTF-8并替换错误字符
                 return byte_data.decode('utf-8', errors='replace')
             
-            # 实时读取输出
+            # 实时读取输出（改进版 - 使用非阻塞读取避免卡死）
             stderr_lines = []
-            timeout = getattr(self, '_timeout', 3600)
+            timeout = getattr(self, '_timeout', DEFAULT_TIMEOUT)
             start_time = time.time()
-            no_output_count = 0  # 连续无输出计数
-            max_no_output = 100  # 最大连续无输出次数（1秒）
-            
+
             while True:
                 # 检查超时
                 if time.time() - start_time > timeout:
                     if self.logger:
                         self.logger.warning(f"Script execution timeout: {execution_id}")
-                    try:
-                        process.terminate()
-                        process.wait(timeout=3)
-                    except:
-                        process.kill()
+
+                    # 使用安全终止方法（强制杀死进程树）
+                    self._terminate_process_safe(process, execution_id)
+
                     with self._lock:
                         execution_info['output'].append("执行超时")
                         execution_info['status'] = ExecutionStatus.TIMEOUT
                         execution_info['end_time'] = datetime.now()
+                        execution_info['test_result'] = 'timeout'
                     break
-                
+
                 # 检查是否被取消（使用锁保护）
+                should_cancel = False
                 with self._lock:
                     if execution_info['status'] == ExecutionStatus.CANCELLED:
-                        break
-                
-                if execution_info['status'] == ExecutionStatus.CANCELLED:
+                        should_cancel = True
+
+                if should_cancel:
                     try:
                         process.terminate()
                         process.wait(timeout=3)
-                    except:
+                    except Exception:
                         process.kill()
                     break
-                
-                # 先检查进程是否已经结束
+
+                # 检查进程是否已经结束
                 poll_result = process.poll()
-                
-                # 读取stdout（二进制模式）
-                line_bytes = process.stdout.readline()
+
+                # 使用非阻塞方式读取stdout
+                try:
+                    # 尝试读取一行，但使用超时机制
+                    line_bytes = None
+
+                    # 检查是否有数据可读（Windows兼容方式）
+                    # 使用threading.Timer实现超时读取
+                    read_result = [None]
+                    read_error = [None]
+
+                    def do_read():
+                        try:
+                            read_result[0] = process.stdout.readline()
+                        except Exception as e:
+                            read_error[0] = e
+
+                    read_thread = threading.Thread(target=do_read, daemon=True)
+                    read_thread.start()
+                    read_thread.join(timeout=0.1)  # 100ms超时
+
+                    if read_thread.is_alive():
+                        # 读取超时，检查进程状态
+                        if poll_result is not None:
+                            # 进程已结束，退出循环
+                            if self.logger:
+                                self.logger.info(f"Process ended (read timeout), exit code: {poll_result} for {execution_id}")
+                            break
+                        # 进程还在运行，继续等待
+                        time.sleep(0.05)
+                        continue
+
+                    if read_error[0]:
+                        raise read_error[0]
+
+                    line_bytes = read_result[0]
+
+                except Exception as e:
+                    if self.logger:
+                        self.logger.debug(f"Read error (non-critical): {e}")
+                    line_bytes = None
+
                 if line_bytes:
                     line = smart_decode(line_bytes).rstrip()
                     with self._lock:
                         execution_info['output'].append(line)
-                    
-                    # 更新进度（简单估算）
-                    execution_info['progress'] = min(90, len(execution_info['output']) * 2)
-                    no_output_count = 0  # 重置无输出计数
-                else:
-                    no_output_count += 1
-                
-                # 如果进程已结束，读取所有剩余输出后退出
-                if poll_result is not None:
-                    # 读取剩余输出
-                    remaining_bytes = process.stdout.read()
-                    if remaining_bytes:
-                        remaining = smart_decode(remaining_bytes)
-                        for line in remaining.split('\n'):
-                            if line.strip():
-                                with self._lock:
-                                    execution_info['output'].append(line.rstrip())
-                    
-                    # 读取stderr
-                    stderr_bytes = process.stderr.read()
-                    if stderr_bytes:
-                        stderr_output = smart_decode(stderr_bytes)
-                        stderr_lines = stderr_output.strip().split('\n')
-                    
+                        # 更新进度（简单估算）
+                        execution_info['progress'] = min(90, len(execution_info['output']) * 2)
+                elif poll_result is not None:
+                    # 进程已结束且没有更多输出，读取剩余数据后退出
                     if self.logger:
                         self.logger.info(f"Process ended with return code: {poll_result} for {execution_id}")
-                    break
-                
-                # 如果长时间没有输出且进程状态未知，主动检查进程状态
-                if no_output_count >= max_no_output:
-                    poll_result = process.poll()
-                    if poll_result is not None:
-                        if self.logger:
-                            self.logger.info(f"Process detected as ended (no output) with return code: {poll_result} for {execution_id}")
-                        # 读取所有剩余输出
-                        remaining_bytes = process.stdout.read()
-                        if remaining_bytes:
-                            remaining = smart_decode(remaining_bytes)
+
+                    # 尝试读取剩余输出（带超时）
+                    try:
+                        remaining_result = [None]
+                        def read_remaining():
+                            remaining_result[0] = process.stdout.read()
+
+                        read_thread = threading.Thread(target=read_remaining, daemon=True)
+                        read_thread.start()
+                        read_thread.join(timeout=2)  # 2秒超时
+
+                        if not read_thread.is_alive() and remaining_result[0]:
+                            remaining = smart_decode(remaining_result[0])
                             for line in remaining.split('\n'):
                                 if line.strip():
                                     with self._lock:
                                         execution_info['output'].append(line.rstrip())
-                        
-                        stderr_bytes = process.stderr.read()
-                        if stderr_bytes:
-                            stderr_output = smart_decode(stderr_bytes)
+                    except Exception as e:
+                        if self.logger:
+                            self.logger.debug(f"Error reading remaining output: {e}")
+
+                    # 读取stderr（带超时）
+                    try:
+                        stderr_result = [None]
+                        def do_read_stderr():
+                            stderr_result[0] = process.stderr.read()
+
+                        stderr_thread = threading.Thread(target=do_read_stderr, daemon=True)
+                        stderr_thread.start()
+                        stderr_thread.join(timeout=2)
+
+                        if not stderr_thread.is_alive() and stderr_result[0]:
+                            stderr_output = smart_decode(stderr_result[0])
                             stderr_lines = stderr_output.strip().split('\n')
-                        break
-                    no_output_count = 0  # 重置计数
-                
+                    except Exception as e:
+                        if self.logger:
+                            self.logger.debug(f"Error reading stderr: {e}")
+
+                    break
+
                 # 短暂休眠避免CPU占用过高
-                time.sleep(0.01)
+                time.sleep(0.05)
             
             return_code = process.returncode
             

@@ -4,7 +4,9 @@
 """
 
 import hashlib
+import os
 import secrets
+import threading
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 
@@ -28,9 +30,10 @@ class UserService:
         """
         self.user_repo = user_repo
         self.logger = logger
-        
+
         self._current_user = None
         self._sessions = {}  # session_token -> user_info
+        self._lock = threading.Lock()
         
         # 确保默认管理员账户存在
         self._ensure_default_admin()
@@ -61,6 +64,13 @@ class UserService:
                     'success': False,
                     'error': 'Invalid username or password'
                 }
+
+            # 兼容旧版SHA256哈希：验证通过后自动升级为PBKDF2格式
+            if ':' not in user['password_hash']:
+                new_hash = self._hash_password(password)
+                self.user_repo.update(user['id'], {'password_hash': new_hash})
+                if self.logger:
+                    self.logger.info(f"Upgraded password hash for user: {username}")
             
             # 检查用户是否被禁用
             if not user.get('is_active', True):
@@ -71,22 +81,22 @@ class UserService:
             
             # 生成会话令牌
             session_token = self._generate_session_token()
-            
-            # 保存会话
-            self._sessions[session_token] = {
-                'user_id': user['id'],
-                'username': user['username'],
-                'role': user['role'],
-                'login_time': datetime.now().isoformat()
-            }
-            
+
+            # 保存会话（线程安全）
+            with self._lock:
+                self._sessions[session_token] = {
+                    'user_id': user['id'],
+                    'username': user['username'],
+                    'role': user['role'],
+                    'login_time': datetime.now().isoformat()
+                }
+                # 设置当前用户
+                self._current_user = user
+
             # 更新最后登录时间
             self.user_repo.update(user['id'], {
                 'last_login': datetime.now().isoformat()
             })
-            
-            # 设置当前用户
-            self._current_user = user
             
             if self.logger:
                 self.logger.info(f"User logged in: {username}")
@@ -121,14 +131,15 @@ class UserService:
             登出结果
         """
         try:
-            if session_token in self._sessions:
-                username = self._sessions[session_token]['username']
-                del self._sessions[session_token]
-                
-                if self.logger:
-                    self.logger.info(f"User logged out: {username}")
-            
-            self._current_user = None
+            with self._lock:
+                if session_token in self._sessions:
+                    username = self._sessions[session_token]['username']
+                    del self._sessions[session_token]
+
+                    if self.logger:
+                        self.logger.info(f"User logged out: {username}")
+
+                self._current_user = None
             
             return {
                 'success': True,
@@ -153,7 +164,8 @@ class UserService:
         Returns:
             用户信息，如果会话无效则返回None
         """
-        return self._sessions.get(session_token)
+        with self._lock:
+            return self._sessions.get(session_token)
     
     def verify_token(self, session_token: str) -> Optional[Dict[str, Any]]:
         """验证令牌（别名方法，用于测试兼容）
@@ -172,7 +184,8 @@ class UserService:
         Returns:
             当前用户信息
         """
-        return self._current_user
+        with self._lock:
+            return self._current_user
     
     def create_user(
         self,
@@ -408,28 +421,40 @@ class UserService:
             }
     
     def _hash_password(self, password: str) -> str:
-        """哈希密码
-        
+        """哈希密码（PBKDF2 + 随机盐）
+
         Args:
             password: 明文密码
-            
+
         Returns:
-            哈希后的密码
+            哈希后的密码（格式：salt_hex:key_hex）
         """
-        # 使用SHA-256哈希
-        return hashlib.sha256(password.encode()).hexdigest()
-    
+        salt = os.urandom(16)
+        key = hashlib.pbkdf2_hmac('sha256', password.encode(), salt, 100000)
+        return salt.hex() + ':' + key.hex()
+
     def _verify_password(self, password: str, password_hash: str) -> bool:
-        """验证密码
-        
+        """验证密码（兼容旧版SHA256哈希和新版PBKDF2哈希）
+
         Args:
             password: 明文密码
             password_hash: 哈希密码
-            
+
         Returns:
             是否匹配
         """
-        return self._hash_password(password) == password_hash
+        try:
+            # 新格式: salt_hex:key_hex (PBKDF2)
+            if ':' in password_hash:
+                salt_hex, key_hex = password_hash.split(':', 1)
+                salt = bytes.fromhex(salt_hex)
+                key = hashlib.pbkdf2_hmac('sha256', password.encode(), salt, 100000)
+                return key.hex() == key_hex
+            # 旧格式: 纯SHA256哈希（64字符十六进制）
+            else:
+                return hashlib.sha256(password.encode()).hexdigest() == password_hash
+        except (ValueError, AttributeError):
+            return False
     
     def _generate_session_token(self) -> str:
         """生成会话令牌
@@ -454,8 +479,13 @@ class UserService:
             admin = self.user_repo.get_by_username('admin')
             
             if not admin:
-                # 从环境变量读取密码，如果没有则使用默认值
-                admin_password = os.environ.get('ADMIN_PASSWORD', 'YWB9806')
+                # 从环境变量读取密码，如果没有则随机生成
+                admin_password = os.environ.get('ADMIN_PASSWORD')
+                if not admin_password:
+                    admin_password = os.urandom(8).hex()
+                    if self.logger:
+                        self.logger.info("Generated default admin password (see console output)")
+                    print(f"[SETUP] Default admin password: {admin_password}")
                 
                 # 创建默认超级管理员账户
                 user_data = {
@@ -497,17 +527,18 @@ class UserService:
         """
         try:
             if user_id is None:
-                user = self._current_user
+                with self._lock:
+                    user = self._current_user
             else:
                 user = self.user_repo.get_by_id(user_id)
-            
+
             if not user:
                 return False
-            
+
             # 超级管理员始终有权限
             if user.get('role') == UserRole.SUPER_ADMIN:
                 return True
-            
+
             # 检查can_view_results字段
             return bool(user.get('can_view_results', 0))
         
@@ -527,13 +558,14 @@ class UserService:
         """
         try:
             if user_id is None:
-                user = self._current_user
+                with self._lock:
+                    user = self._current_user
             else:
                 user = self.user_repo.get_by_id(user_id)
-            
+
             if not user:
                 return False
-            
+
             return user.get('role') == UserRole.SUPER_ADMIN
         
         except Exception as e:

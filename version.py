@@ -3,16 +3,16 @@
 用于管理应用程序版本信息和更新检查
 """
 
-__version__ = "1.1.0"
-__version_info__ = (1, 1, 0)
+__version__ = "1.2.0"
+__version_info__ = (1, 2, 0)
 
 # 版本信息
 VERSION = {
     "major": 1,
-    "minor": 1,
+    "minor": 2,
     "patch": 0,
     "build": 0,
-    "release_date": "2025-12-23",
+    "release_date": "2026-04-04",
     "release_type": "stable"  # stable, beta, alpha
 }
 

@@ -4,9 +4,12 @@
 """
 
 import logging
+from logging.handlers import RotatingFileHandler
 import os
 from datetime import datetime
 from typing import Optional
+
+from AppCode.utils.constants import DEFAULT_LOG_MAX_SIZE
 
 
 class LogManager:
@@ -42,7 +45,9 @@ class LogManager:
         )
         
         # 文件处理器
-        file_handler = logging.FileHandler(log_file, encoding='utf-8')
+        file_handler = RotatingFileHandler(
+            log_file, maxBytes=DEFAULT_LOG_MAX_SIZE, backupCount=5, encoding='utf-8'
+        )
         file_handler.setLevel(logging.DEBUG)
         file_handler.setFormatter(formatter)
         

@@ -58,16 +58,13 @@ class ExecutionHistoryRepository(BaseRepository):
         Returns:
             执行记录列表
         """
-        all_records = self.get_all()
-        
-        # 按开始时间排序
-        sorted_records = sorted(
-            all_records,
-            key=lambda x: x.get('start_time', ''),
-            reverse=True
-        )
-        
-        return sorted_records[:limit]
+        try:
+            sql = "SELECT * FROM execution_history ORDER BY start_time DESC LIMIT ?"
+            return self.db.execute_query(sql, (limit,))
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"Failed to get recent records: {e}")
+            return []
     
     def get_by_date_range(
         self,
@@ -83,37 +80,16 @@ class ExecutionHistoryRepository(BaseRepository):
         Returns:
             执行记录列表
         """
-        all_records = self.get_all()
-        
-        # 添加时间部分以确保完整的日期范围
-        start_datetime = f"{start_date} 00:00:00"
-        end_datetime = f"{end_date} 23:59:59"
-        
-        filtered = []
-        for record in all_records:
-            start_time = record.get('start_time', '')
-            if not start_time:
-                continue
-            
-            try:
-                # 提取日期时间部分进行比较（处理ISO格式）
-                # ISO格式：2025-12-13T01:32:04 或 2025-12-13 01:32:04 或 2025-12-13T01:32:04.123456
-                record_datetime = start_time.replace('T', ' ').split('.')[0]  # 移除毫秒部分
-                
-                # 确保格式一致性：如果record_datetime只有日期没有时间，添加时间
-                if len(record_datetime) == 10:  # 只有日期 yyyy-MM-dd
-                    record_datetime = f"{record_datetime} 00:00:00"
-                
-                # 字符串比较（确保格式一致）
-                if start_datetime <= record_datetime <= end_datetime:
-                    filtered.append(record)
-            except Exception as e:
-                # 如果解析失败，记录日志但继续处理其他记录
-                if self.logger:
-                    self.logger.warning(f"Failed to parse start_time '{start_time}': {e}")
-                continue
-        
-        return filtered
+        try:
+            # 使用 T 前缀格式以匹配 isoformat() 存储的格式（如 2026-04-04T10:30:00）
+            start_datetime = f"{start_date}T00:00:00"
+            end_datetime = f"{end_date}T23:59:59"
+            sql = "SELECT * FROM execution_history WHERE start_time >= ? AND start_time <= ?"
+            return self.db.execute_query(sql, (start_datetime, end_datetime))
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"Failed to get records by date range: {e}")
+            return []
     
     def get_statistics(self) -> Dict[str, Any]:
         """获取执行统计信息

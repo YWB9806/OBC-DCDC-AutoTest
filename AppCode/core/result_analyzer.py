@@ -264,19 +264,28 @@ class ResultAnalyzer(IResultAnalyzer):
     def generate_report(
         self,
         report_type: str,
-        params: Optional[Dict[str, Any]] = None
+        params: Optional[Dict[str, Any]] = None,
+        **kwargs
     ) -> str:
-        """生成报告
-        
+        """生成报告（接口方法）
+
         Args:
             report_type: 报告类型 (summary/detailed/trend)
             params: 报告参数
-            
+            **kwargs: 额外参数
+
         Returns:
             报告内容
         """
-        params = params or {}
-        
+        if params is None:
+            params = kwargs
+        elif kwargs:
+            params.update(kwargs)
+
+        return self._generate_report_impl(report_type, params)
+
+    def _generate_report_impl(self, report_type: str, params: Dict[str, Any]) -> str:
+        """内部报告生成"""
         if report_type == 'summary':
             return self._generate_summary_report(params)
         elif report_type == 'detailed':
@@ -285,7 +294,7 @@ class ResultAnalyzer(IResultAnalyzer):
             return self._generate_trend_report(params)
         else:
             return f"Unknown report type: {report_type}"
-    
+
     def _generate_summary_report(self, params: Dict[str, Any]) -> str:
         """生成摘要报告"""
         stats = self.get_statistics(
@@ -413,73 +422,92 @@ class ResultAnalyzer(IResultAnalyzer):
             )
         
         return comparison
-    
-    def analyze_execution(self, execution_id: str) -> Dict[str, Any]:
-        """分析执行结果（接口方法）
-        
-        Args:
-            execution_id: 执行ID
-            
-        Returns:
-            分析结果
-        """
-        return self.analyze_execution_result(execution_id)
-    
-    def analyze_batch(self, batch_id: str) -> Dict[str, Any]:
-        """分析批次结果（接口方法）
-        
-        Args:
-            batch_id: 批次ID
-            
-        Returns:
-            分析结果
-        """
-        return self.analyze_batch_result(batch_id)
-    
+
     def get_trend_analysis(
         self,
+        days: int = 7,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None
     ) -> Dict[str, Any]:
         """获取趋势分析（接口方法）
-        
+
         Args:
+            days: 分析天数
             start_date: 开始日期
             end_date: 结束日期
-            
+
         Returns:
             趋势分析
         """
+        if not start_date and not end_date:
+            from datetime import timedelta
+            end_date = datetime.now().strftime('%Y-%m-%d')
+            start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
         return self.get_statistics(start_date, end_date)
-    
+
+    def analyze_execution(self, execution_id) -> Dict[str, Any]:
+        """分析单次执行结果（接口方法）"""
+        return self.analyze_execution_result(str(execution_id))
+
+    def analyze_batch(self, batch_id) -> Dict[str, Any]:
+        """分析批次执行结果（接口方法）"""
+        return self.analyze_batch_result(str(batch_id))
+
     def export_results(
         self,
-        execution_ids: List[str],
-        format: str = 'json'
+        format: str = 'json',
+        data: Optional[List[Dict[str, Any]]] = None,
+        output_path: Optional[str] = None,
+        execution_ids: Optional[List[str]] = None
     ) -> str:
         """导出结果（接口方法）
-        
+
         Args:
-            execution_ids: 执行ID列表
             format: 导出格式
-            
+            data: 数据列表（接口参数）
+            output_path: 输出路径（接口参数）
+            execution_ids: 执行ID列表（兼容参数）
+
         Returns:
             导出内容
         """
-        results = []
-        for exec_id in execution_ids:
-            result = self.analyze_execution_result(exec_id)
-            results.append(result)
-        
+        import json
+        import os
+
+        # 获取数据
+        if data is None and execution_ids:
+            data = []
+            for exec_id in execution_ids:
+                result = self.analyze_execution_result(exec_id)
+                data.append(result)
+
+        if data is None:
+            data = []
+
+        # 生成内容
         if format == 'json':
-            import json
-            return json.dumps(results, indent=2, ensure_ascii=False)
+            content = json.dumps(data, indent=2, ensure_ascii=False)
+        elif format == 'csv':
+            if not data:
+                content = ""
+            else:
+                headers = list(data[0].keys())
+                lines = [",".join(headers)]
+                for row in data:
+                    lines.append(",".join(str(row.get(h, '')) for h in headers))
+                content = "\n".join(lines)
         else:
-            # 简单文本格式
             lines = []
-            for result in results:
-                lines.append(f"Execution: {result.get('execution_id')}")
-                lines.append(f"Status: {result.get('status')}")
-                lines.append(f"Duration: {result.get('duration')}s")
+            for item in data:
+                for k, v in item.items():
+                    lines.append(f"{k}: {v}")
                 lines.append("-" * 40)
-            return "\n".join(lines)
+            content = "\n".join(lines)
+
+        # 写入文件
+        if output_path:
+            os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
+            with open(output_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+
+        return content

@@ -160,7 +160,7 @@ class ScriptService:
             scripts = self.script_manager.search_scripts(keyword)
         else:
             # 获取所有脚本（从缓存）
-            scripts = list(self.script_manager._scripts_cache.values())
+            scripts = self.script_manager.get_all_scripts()
         
         # 按分类过滤
         if category:
@@ -194,7 +194,7 @@ class ScriptService:
         Returns:
             分类列表
         """
-        scripts = list(self.script_manager._scripts_cache.values())
+        scripts = self.script_manager.get_all_scripts()
         categories = set(s.get('category', '未分类') for s in scripts)
         return sorted(list(categories))
     

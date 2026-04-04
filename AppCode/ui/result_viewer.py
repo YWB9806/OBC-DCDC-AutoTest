@@ -87,6 +87,7 @@ class ResultViewer(QWidget):
         row2_layout.addWidget(QLabel("测试方案:"))
         self.suite_combo = QComboBox()
         self.suite_combo.addItem("-- 全部方案 --")
+        self.suite_combo.setMinimumWidth(200)  # 设置最小宽度，确保内容显示完整
         self.suite_combo.currentIndexChanged.connect(self._on_suite_changed)
         row2_layout.addWidget(self.suite_combo)
         
@@ -114,6 +115,11 @@ class ResultViewer(QWidget):
         self.export_json_btn = QPushButton("导出JSON")
         self.export_json_btn.clicked.connect(self._export_to_json)
         row2_layout.addWidget(self.export_json_btn)
+
+        self.compare_btn = QPushButton("对比选中")
+        self.compare_btn.setToolTip("选中2条记录后点击进行对比")
+        self.compare_btn.clicked.connect(self._on_compare)
+        row2_layout.addWidget(self.compare_btn)
         
         filter_layout.addLayout(row2_layout)
         
@@ -243,7 +249,7 @@ class ResultViewer(QWidget):
                             dt = datetime.fromtimestamp(timestamp_s)
                             batch_time = dt.strftime('%H:%M:%S')
                             all_batch_times.add(batch_time)
-                    except:
+                    except Exception:
                         pass
                 elif not batch_id:
                     # 如果没有batch_id，使用start_time
@@ -253,7 +259,7 @@ class ResultViewer(QWidget):
                             dt = datetime.fromisoformat(start_time.replace('T', ' ').split('.')[0])
                             batch_time = dt.strftime('%H:%M:%S')
                             all_batch_times.add(batch_time)
-                        except:
+                        except Exception:
                             pass
             
             # 更新批次时间下拉框（使用所有批次时间）
@@ -279,7 +285,7 @@ class ResultViewer(QWidget):
                                 batch_time = dt.strftime('%H:%M:%S')
                                 if batch_time == batch_time_filter:
                                     filtered_results.append(result)
-                        except:
+                        except Exception:
                             pass
                 results = filtered_results
             
@@ -329,7 +335,7 @@ class ResultViewer(QWidget):
                             timestamp_s = timestamp_us / 1000000
                             dt = datetime.fromtimestamp(timestamp_s)
                             batch_time = dt.strftime('%H:%M:%S')
-                    except:
+                    except Exception:
                         pass
                 
                 if batch_time == '-':
@@ -339,7 +345,7 @@ class ResultViewer(QWidget):
                         try:
                             dt = datetime.fromisoformat(start_time.replace('T', ' ').split('.')[0])
                             batch_time = dt.strftime('%H:%M:%S')
-                        except:
+                        except Exception:
                             pass
                 
                 batch_time_item = QTableWidgetItem(batch_time)
@@ -570,7 +576,7 @@ class ResultViewer(QWidget):
                                 timestamp_s = timestamp_us / 1000000
                                 dt = datetime.fromtimestamp(timestamp_s)
                                 batch_time = dt.strftime('%Y-%m-%d %H:%M:%S')
-                        except:
+                        except Exception:
                             batch_time = batch_id
                     
                     # 转换测试结果为中文
@@ -640,3 +646,29 @@ class ResultViewer(QWidget):
         except Exception as e:
             self.logger.error(f"Error exporting to JSON: {e}")
             QMessageBox.critical(self, "错误", f"导出失败: {e}")
+
+    def _on_compare(self):
+        """对比选中的记录"""
+        selected_rows = set()
+        for item in self.result_table.selectedItems():
+            selected_rows.add(item.row())
+
+        if len(selected_rows) != 2:
+            QMessageBox.warning(self, "警告", "请选中恰好 2 条记录进行对比")
+            return
+
+        rows = sorted(selected_rows)
+        results = []
+        for row in rows:
+            name_item = self.result_table.item(row, 0)
+            if name_item:
+                result = name_item.data(Qt.UserRole)
+                if result:
+                    results.append(result)
+
+        if len(results) != 2:
+            return
+
+        from AppCode.ui.comparison_dialog import ComparisonDialog
+        dialog = ComparisonDialog(results[0], results[1], self)
+        dialog.exec_()

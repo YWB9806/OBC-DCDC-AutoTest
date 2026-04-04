@@ -81,12 +81,35 @@ class LRUCache:
     
     def size(self) -> int:
         """获取缓存大小
-        
+
         Returns:
             缓存项数量
         """
         with self.lock:
             return len(self.cache)
+
+    def values(self):
+        """获取所有缓存值"""
+        with self.lock:
+            return list(self.cache.values())
+
+    def keys(self):
+        """获取所有缓存键"""
+        with self.lock:
+            return list(self.cache.keys())
+
+    def __contains__(self, key: str) -> bool:
+        """检查键是否存在"""
+        with self.lock:
+            return key in self.cache
+
+    def __iter__(self):
+        """迭代缓存键"""
+        with self.lock:
+            return iter(list(self.cache.keys()))
+
+    def __len__(self) -> int:
+        return self.size()
 
 
 class TTLCache:
@@ -167,12 +190,38 @@ class TTLCache:
     
     def size(self) -> int:
         """获取缓存大小
-        
+
         Returns:
             缓存项数量
         """
         with self.lock:
             return len(self.cache)
+
+    def values(self):
+        """获取所有未过期的缓存值"""
+        with self.lock:
+            current_time = time.time()
+            return [
+                value for value, expire_time in self.cache.values()
+                if current_time <= expire_time
+            ]
+
+    def keys(self):
+        """获取所有缓存键"""
+        with self.lock:
+            return list(self.cache.keys())
+
+    def __contains__(self, key: str) -> bool:
+        """检查键是否存在且未过期"""
+        return self.get(key) is not None
+
+    def __iter__(self):
+        """迭代缓存键"""
+        with self.lock:
+            return iter(list(self.cache.keys()))
+
+    def __len__(self) -> int:
+        return self.size()
 
 
 @singleton

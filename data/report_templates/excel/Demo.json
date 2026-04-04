@@ -1,0 +1,27 @@
+{
+  "match_column": "ID",
+  "match_field": "script_name",
+  "header_row": 1,
+  "data_start_row": 2,
+  "column_mappings": [
+    {
+      "data_field": "test_result",
+      "excel_column": "实测结果",
+      "enabled": true
+    },
+    {
+      "data_field": "output",
+      "excel_column": "Comments",
+      "enabled": true
+    }
+  ],
+  "excel_columns": [
+    "ID",
+    "前置",
+    "操作",
+    "预期结果",
+    "实测结果",
+    "PASS/FAIL",
+    "Comments"
+  ]
+}

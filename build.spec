@@ -19,7 +19,6 @@ app_version = get_version_string()
 
 # 数据文件
 datas = [
-    ('AppCode/config/app_config.json', 'AppCode/config'),
     ('config/app_config.json', 'config'),
     ('version.py', '.'),
     ('README.md', '.'),

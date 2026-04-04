@@ -4,6 +4,44 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/) 规范。
 
+## [1.2.0] - 2026-04-04
+
+### 新增
+- ✨ **测试报告生成系统**：支持通过 Excel 模板自动生成测试报告
+  - 支持导入任意 Excel 模板，配置列映射关系
+  - 脚本名称自动匹配（支持有/无 .py 扩展名）
+  - 支持按测试方案、日期范围、执行批次筛选数据
+  - HTML 表格预览，实时显示通过/失败统计及通过率
+  - 一键导出填充数据后的 Excel 报告
+  - 批次选择下拉框，自动解析批次时间戳
+  - 对比对话框，支持两次执行结果差异对比
+
+- ✨ **报告模板配置**：可视化配置 Excel 模板列映射
+  - 支持匹配列（脚本名称/路径）和数据字段映射
+  - 支持的数据字段：测试结果、状态、耗时、开始/结束时间、标准输出、错误输出
+  - 模板预览（显示前5行 Excel 内容）
+  - 可配置数据起始行
+
+### 优化
+- 🎨 **UI 界面改进**：
+  - 主窗口标签页"报告"更名为"测试报告"
+  - 测试报告界面布局优化，列映射和生成报告区域更紧凑
+  - 匹配配置和列映射合并为单一区域，减少空间占用
+
+### 修复
+- 🐛 **Excel 模板匹配失败**：修复了模板中脚本名称与实际脚本名一致但无法匹配的问题
+  - 根因：数据库存储的 script_path 包含 `.py` 扩展名，Excel 模板中通常不含扩展名
+  - 修复：匹配时自动使用 `os.path.splitext()` 去除扩展名
+  - 兼容：同时保留带扩展名的匹配键，兼容 Excel 中写 `.py` 的情况
+
+### 架构改进
+- 🔧 移除冗余模块：`AppCode/config.py`、`AppCode/infrastructure/database.py`、`AppCode/infrastructure/di_container.py`、`AppCode/infrastructure/cache_manager.py`、`AppCode/infrastructure/logging_config.py`、`AppCode/utils/auth_decorators.py`、`AppCode/ui/plugin_panel.py`
+- 🔧 统一依赖注入：通过 `AppCode/core/container.py` 的 DI 容器管理所有服务
+- 🔧 数据库层简化：合并重复的数据访问代码到 `AppCode/data_access/sqlite_data_access.py`
+- 🔧 新增 openpyxl 依赖用于 Excel 报告功能
+
+---
+
 ## [1.1.0] - 2025-12-23
 
 ### 修复

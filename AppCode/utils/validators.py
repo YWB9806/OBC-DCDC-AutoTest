@@ -126,15 +126,15 @@ class PathValidator:
         """
         if not path:
             raise ValidationError("File path cannot be empty", "path")
-        
+
         # 检查路径遍历攻击
         if '..' in path:
             raise ValidationError("Path traversal detected", "path")
-        
+
         # 检查是否存在
         if must_exist and not os.path.exists(path):
             raise ValidationError(f"File not found: {path}", "path")
-        
+
         return path
     
     @staticmethod
@@ -155,11 +155,11 @@ class PathValidator:
         """
         if not path:
             raise ValidationError("Directory path cannot be empty", "path")
-        
+
         # 检查路径遍历攻击
         if '..' in path:
             raise ValidationError("Path traversal detected", "path")
-        
+
         # 检查是否存在
         if not os.path.exists(path):
             if must_exist:

@@ -121,7 +121,7 @@ class ExecutorType:
 # ============ 配置常量 ============
 # 执行配置
 DEFAULT_MAX_PARALLEL = 1       # 默认最大并行数（车载ECU测试必须为1）
-DEFAULT_TIMEOUT = 300          # 默认超时时间（秒）
+DEFAULT_TIMEOUT = 3600         # 默认超时时间（秒）
 DEFAULT_RETRY_COUNT = 0        # 默认重试次数
 
 # 缓存配置

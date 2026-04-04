@@ -5,25 +5,30 @@
 
 from typing import Dict, Any, Callable, Optional
 import logging
+import threading
 
 
 class Container:
     """依赖注入容器"""
-    
+
     _instance = None  # 单例实例
-    
+    _instance_lock = threading.Lock()
+
     @classmethod
     def get_instance(cls):
-        """获取容器单例实例"""
+        """获取容器单例实例（线程安全）"""
         if cls._instance is None:
-            cls._instance = cls()
+            with cls._instance_lock:
+                if cls._instance is None:
+                    cls._instance = cls()
         return cls._instance
-    
+
     def __init__(self):
         """初始化容器"""
         self._services = {}
         self._singletons = {}
         self._factories = {}
+        self._resolve_lock = threading.RLock()
         
         # 注册核心服务
         self._register_core_services()
@@ -92,29 +97,34 @@ class Container:
         self._singletons[name] = instance
     
     def resolve(self, name: str) -> Any:
-        """解析服务
-        
+        """解析服务（线程安全）
+
         Args:
             name: 服务名称
-            
+
         Returns:
             服务实例
         """
         # 检查是否已有单例实例
         if name in self._singletons:
             return self._singletons[name]
-        
-        # 检查是否有工厂函数
-        if name in self._factories:
-            instance = self._factories[name]()
-            self._singletons[name] = instance
-            return instance
-        
-        # 检查是否有瞬态服务
-        if name in self._services:
-            return self._services[name]()
-        
-        raise KeyError(f"Service not found: {name}")
+
+        with self._resolve_lock:
+            # double-checked locking
+            if name in self._singletons:
+                return self._singletons[name]
+
+            # 检查是否有工厂函数
+            if name in self._factories:
+                instance = self._factories[name]()
+                self._singletons[name] = instance
+                return instance
+
+            # 检查是否有瞬态服务
+            if name in self._services:
+                return self._services[name]()
+
+            raise KeyError(f"Service not found: {name}")
     
     def _create_log_manager(self):
         """创建日志管理器"""
@@ -128,7 +138,7 @@ class Container:
     
     def _create_cache_manager(self):
         """创建缓存管理器"""
-        from AppCode.infrastructure.cache_manager import CacheManager
+        from AppCode.infrastructure.cache import CacheManager
         return CacheManager()
     
     def _create_data_access(self):

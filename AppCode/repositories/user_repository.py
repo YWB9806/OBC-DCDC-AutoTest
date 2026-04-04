@@ -41,7 +41,7 @@ class UserRepository:
             self.db.execute_non_query("""
                 ALTER TABLE users ADD COLUMN can_view_results INTEGER DEFAULT 0
             """)
-        except:
+        except Exception:
             # 字段已存在或表不存在，忽略错误
             pass
         
@@ -163,7 +163,7 @@ class UserRepository:
         Returns:
             是否成功
         """
-        return self.db.delete('users', 'id = ?', (user_id,))
+        return self.db.delete('users', user_id)
     
     def count(self) -> int:
         """获取用户总数

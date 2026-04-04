@@ -124,15 +124,15 @@ class ScriptSelectionDialog(QDialog):
                 try:
                     rel_path = os.path.relpath(script_path, self.source_path)
                     folder = os.path.dirname(rel_path)
-                except:
+                except Exception:
                     rel_path = script_path
                     folder = ""
-                
+
                 # 获取文件大小
                 try:
                     size = os.path.getsize(script_path)
                     size_str = self._format_size(size)
-                except:
+                except Exception:
                     size_str = "N/A"
                 
                 # 创建或获取文件夹节点

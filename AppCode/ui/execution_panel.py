@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView,
     QMessageBox
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QMetaObject, Q_ARG
+from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 from PyQt5.QtGui import QColor, QTextCursor
 from datetime import datetime
 import threading
@@ -17,12 +17,19 @@ import threading
 
 class ExecutionPanel(QWidget):
     """执行控制面板组件"""
-    
+
     # 信号定义
     execution_started = pyqtSignal(str)  # 执行开始
     execution_finished = pyqtSignal(str, bool)  # 执行完成(execution_id, success)
     execution_paused = pyqtSignal(str)  # 执行暂停
     execution_resumed = pyqtSignal(str)  # 执行恢复
+
+    # 新增：控制按钮信号
+    refresh_requested = pyqtSignal()  # 请求刷新
+    start_requested = pyqtSignal()  # 请求开始执行
+    stop_requested = pyqtSignal()  # 请求停止执行
+    pause_requested = pyqtSignal()  # 请求暂停执行
+    resume_requested = pyqtSignal()  # 请求继续执行
     
     def __init__(self, container, parent=None):
         """初始化执行控制面板
@@ -65,139 +72,196 @@ class ExecutionPanel(QWidget):
     def _init_ui(self):
         """初始化UI"""
         layout = QVBoxLayout(self)
-        
-        # 数据统计模块 - 紧凑单行布局
-        stats_group = QGroupBox("数据统计")
-        stats_layout = QHBoxLayout()
-        stats_layout.setSpacing(15)  # 设置间距
-        
-        # 当前状态
-        stats_layout.addWidget(QLabel("当前状态:"))
-        self.status_label_main = QLabel("空闲中")
-        self.status_label_main.setStyleSheet("font-weight: bold; color: green;")
-        stats_layout.addWidget(self.status_label_main)
-        
-        # 分隔符
-        stats_layout.addWidget(QLabel("|"))
-        
-        # 已选脚本
-        stats_layout.addWidget(QLabel("已选脚本:"))
-        self.selected_count_label = QLabel("0 个")
-        stats_layout.addWidget(self.selected_count_label)
-        
-        # 分隔符
-        stats_layout.addWidget(QLabel("|"))
-        
-        # 成功
-        stats_layout.addWidget(QLabel("成功:"))
-        self.success_count_label = QLabel("0 个")
-        self.success_count_label.setStyleSheet("color: green;")
-        stats_layout.addWidget(self.success_count_label)
-        
-        # 失败
-        stats_layout.addWidget(QLabel("失败:"))
-        self.failed_count_label = QLabel("0 个")
-        self.failed_count_label.setStyleSheet("color: red;")
-        stats_layout.addWidget(self.failed_count_label)
-        
-        # 待判定
-        stats_layout.addWidget(QLabel("待判定:"))
-        self.pending_count_label = QLabel("0 个")
-        self.pending_count_label.setStyleSheet("color: orange;")
-        stats_layout.addWidget(self.pending_count_label)
-        
-        # 分隔符
-        stats_layout.addWidget(QLabel("|"))
-        
-        # 通过率
-        stats_layout.addWidget(QLabel("本轮通过率:"))
-        self.pass_rate_label = QLabel("0.0%")
-        self.pass_rate_label.setStyleSheet("font-weight: bold;")
-        stats_layout.addWidget(self.pass_rate_label)
-        
-        # 分隔符
-        stats_layout.addWidget(QLabel("|"))
-        
-        # 预估时间
-        stats_layout.addWidget(QLabel("预估剩余时间:"))
-        self.eta_label = QLabel("--:--")
-        stats_layout.addWidget(self.eta_label)
-        
-        # 弹性空间
-        stats_layout.addStretch()
-        
-        # 清空按钮
-        self.clear_btn = QPushButton("清空输出")
-        self.clear_btn.clicked.connect(self._on_clear_output)
-        stats_layout.addWidget(self.clear_btn)
-        
-        # 保留这些标签用于兼容性（隐藏不显示）
-        self.suite_label = QLabel("未选择")
-        self.suite_label.setVisible(False)
-        self.concurrency_label = QLabel("1")
-        self.concurrency_label.setVisible(False)
-        
-        stats_group.setLayout(stats_layout)
-        layout.addWidget(stats_group)
-        
-        # 进度信息组
+
+        # ========== 控制按钮区域（最上方）==========
+        control_group = QGroupBox("执行控制")
+        control_layout = QHBoxLayout()
+        control_layout.setSpacing(10)
+
+        # 刷新按钮
+        self.refresh_btn = QPushButton("🔄 刷新")
+        self.refresh_btn.setToolTip("刷新脚本列表 (F5)")
+        self.refresh_btn.clicked.connect(self._on_refresh_clicked)
+        control_layout.addWidget(self.refresh_btn)
+
+        control_layout.addWidget(QLabel("|"))  # 分隔符
+
+        # 开始执行按钮
+        self.start_btn = QPushButton("▶ 开始执行")
+        self.start_btn.setToolTip("开始执行选中的脚本 (F9)")
+        self.start_btn.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
+        self.start_btn.clicked.connect(self._on_start_clicked)
+        control_layout.addWidget(self.start_btn)
+
+        # 停止执行按钮
+        self.stop_btn = QPushButton("⏹ 停止执行")
+        self.stop_btn.setToolTip("停止当前执行 (Shift+F9)")
+        self.stop_btn.setStyleSheet("background-color: #f44336; color: white; font-weight: bold;")
+        self.stop_btn.setEnabled(False)
+        self.stop_btn.clicked.connect(self._on_stop_clicked)
+        control_layout.addWidget(self.stop_btn)
+
+        # 暂停按钮
+        self.pause_btn = QPushButton("⏸ 暂停")
+        self.pause_btn.setToolTip("暂停执行 (F10)")
+        self.pause_btn.setStyleSheet("background-color: #FF9800; color: white; font-weight: bold;")
+        self.pause_btn.setEnabled(False)
+        self.pause_btn.clicked.connect(self._on_pause_clicked)
+        control_layout.addWidget(self.pause_btn)
+
+        # 继续按钮
+        self.resume_btn = QPushButton("▶ 继续")
+        self.resume_btn.setToolTip("继续执行 (F11)")
+        self.resume_btn.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold;")
+        self.resume_btn.setEnabled(False)
+        self.resume_btn.clicked.connect(self._on_resume_clicked)
+        control_layout.addWidget(self.resume_btn)
+
+        control_layout.addWidget(QLabel("|"))  # 分隔符
+
+        # 跳过当前按钮
+        self.skip_btn = QPushButton("⏭ 跳过当前")
+        self.skip_btn.setToolTip("跳过当前正在执行的脚本 (Ctrl+K)")
+        self.skip_btn.setStyleSheet("background-color: #9C27B0; color: white; font-weight: bold;")
+        self.skip_btn.setEnabled(False)
+        self.skip_btn.clicked.connect(self._on_skip_clicked)
+        control_layout.addWidget(self.skip_btn)
+
+        control_layout.addStretch()  # 弹性空间
+
+        control_group.setLayout(control_layout)
+        layout.addWidget(control_group)
+
+        # ========== 执行进度组 ==========
         progress_group = QGroupBox("执行进度")
         progress_layout = QVBoxLayout()
-        
+
         # 总体进度
         progress_info_layout = QHBoxLayout()
         progress_info_layout.addWidget(QLabel("总体进度:"))
-        
+
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
         progress_info_layout.addWidget(self.progress_bar)
-        
+
         self.progress_label = QLabel("0/0")
         progress_info_layout.addWidget(self.progress_label)
-        
+
         progress_layout.addLayout(progress_info_layout)
-        
+
         # 状态信息
         status_layout = QHBoxLayout()
         status_layout.addWidget(QLabel("状态:"))
         self.status_label = QLabel("就绪")
         status_layout.addWidget(self.status_label)
         status_layout.addStretch()
-        
+
         status_layout.addWidget(QLabel("已用时间:"))
         self.time_label = QLabel("00:00:00")
         status_layout.addWidget(self.time_label)
-        
+
         progress_layout.addLayout(status_layout)
-        
+
         progress_group.setLayout(progress_layout)
         layout.addWidget(progress_group)
-        
-        # 执行列表
+
+        # ========== 数据统计模块（移到进度下方）==========
+        stats_group = QGroupBox("数据统计")
+        stats_layout = QHBoxLayout()
+        stats_layout.setSpacing(15)  # 设置间距
+
+        # 当前状态
+        stats_layout.addWidget(QLabel("当前状态:"))
+        self.status_label_main = QLabel("空闲中")
+        self.status_label_main.setStyleSheet("font-weight: bold; color: green;")
+        stats_layout.addWidget(self.status_label_main)
+
+        # 分隔符
+        stats_layout.addWidget(QLabel("|"))
+
+        # 已选脚本
+        stats_layout.addWidget(QLabel("已选脚本:"))
+        self.selected_count_label = QLabel("0 个")
+        stats_layout.addWidget(self.selected_count_label)
+
+        # 分隔符
+        stats_layout.addWidget(QLabel("|"))
+
+        # 成功
+        stats_layout.addWidget(QLabel("成功:"))
+        self.success_count_label = QLabel("0 个")
+        self.success_count_label.setStyleSheet("color: green;")
+        stats_layout.addWidget(self.success_count_label)
+
+        # 失败
+        stats_layout.addWidget(QLabel("失败:"))
+        self.failed_count_label = QLabel("0 个")
+        self.failed_count_label.setStyleSheet("color: red;")
+        stats_layout.addWidget(self.failed_count_label)
+
+        # 待判定
+        stats_layout.addWidget(QLabel("待判定:"))
+        self.pending_count_label = QLabel("0 个")
+        self.pending_count_label.setStyleSheet("color: orange;")
+        stats_layout.addWidget(self.pending_count_label)
+
+        # 分隔符
+        stats_layout.addWidget(QLabel("|"))
+
+        # 通过率
+        stats_layout.addWidget(QLabel("本轮通过率:"))
+        self.pass_rate_label = QLabel("0.0%")
+        self.pass_rate_label.setStyleSheet("font-weight: bold;")
+        stats_layout.addWidget(self.pass_rate_label)
+
+        # 分隔符
+        stats_layout.addWidget(QLabel("|"))
+
+        # 预估时间
+        stats_layout.addWidget(QLabel("预估剩余时间:"))
+        self.eta_label = QLabel("--:--")
+        stats_layout.addWidget(self.eta_label)
+
+        # 弹性空间
+        stats_layout.addStretch()
+
+        # 清空按钮
+        self.clear_btn = QPushButton("清空输出")
+        self.clear_btn.clicked.connect(self._on_clear_output)
+        stats_layout.addWidget(self.clear_btn)
+
+        # 保留这些标签用于兼容性（隐藏不显示）
+        self.suite_label = QLabel("未选择")
+        self.suite_label.setVisible(False)
+        self.concurrency_label = QLabel("1")
+        self.concurrency_label.setVisible(False)
+
+        stats_group.setLayout(stats_layout)
+        layout.addWidget(stats_group)
+
+        # ========== 执行列表 ==========
         list_group = QGroupBox("执行列表")
         list_layout = QVBoxLayout()
-        
+
         self.execution_table = QTableWidget()
         self.execution_table.setColumnCount(5)
         self.execution_table.setHorizontalHeaderLabels(["脚本名称", "状态", "进度", "耗时", "结果"])
         self.execution_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.execution_table.setSelectionBehavior(QTableWidget.SelectRows)
         list_layout.addWidget(self.execution_table)
-        
+
         list_group.setLayout(list_layout)
         layout.addWidget(list_group)
-        
-        # 输出日志 - 移除最大高度限制，充满剩余空间
+
+        # ========== 输出日志 ==========
         output_group = QGroupBox("执行输出")
         output_layout = QVBoxLayout()
-        
+
         self.output_text = QTextEdit()
         self.output_text.setReadOnly(True)
-        # 移除最大高度限制，让它充满剩余空间
-        # self.output_text.setMaximumHeight(200)
         output_layout.addWidget(self.output_text)
-        
+
         output_group.setLayout(output_layout)
         layout.addWidget(output_group)
     
@@ -581,38 +645,52 @@ class ExecutionPanel(QWidget):
     
     def _update_execution_status(self):
         """更新执行状态（优化版 - 增量更新）"""
-        if not self._is_executing:
+        # 如果不在执行中，或者正在暂停/恢复/停止，跳过更新
+        if not self._is_executing or self._is_pausing or self._is_resuming or self._is_stopping:
             return
-        
+
         try:
             exec_id = self._current_execution_id or self._current_batch_id
             if not exec_id:
                 return
-            
+
             # 获取执行状态
             if self._current_batch_id:
                 status = self.execution_service.get_batch_status(self._current_batch_id)
                 # 更新批次中每个脚本的状态
                 executions = status.get('executions', [])
-                
-                # 优化：只更新状态发生变化的脚本
+
+                # 优化：改进状态更新逻辑（修复状态不更新问题）
                 current_time = datetime.now()
                 for i, execution in enumerate(executions):
                     if i < self.execution_table.rowCount():
                         exec_status = execution.get('status')
                         exec_id_item = execution.get('id')
-                        
-                        # 检查是否需要更新（状态变化或正在运行）
+
+                        # 获取上次更新时间和上次状态
                         last_update = self._last_update_time.get(exec_id_item, None)
+                        last_status_key = f"{exec_id_item}_last_status"
+                        last_status = self._last_update_time.get(last_status_key, None)
+
+                        # 判断是否需要更新
+                        status_changed = last_status != exec_status
+                        is_running = exec_status == 'RUNNING'
+                        is_pending = exec_status == 'PENDING'
+                        is_completed = exec_status in ['SUCCESS', 'FAILED', 'ERROR', 'TIMEOUT', 'CANCELLED']
+
+                        # 完成状态立即更新，状态变化立即更新，运行中每秒更新，等待中每2秒更新
                         should_update = (
-                            exec_status in ['RUNNING', 'SUCCESS', 'FAILED', 'ERROR', 'TIMEOUT', 'CANCELLED'] and
-                            (last_update is None or (current_time - last_update).total_seconds() >= 1.0)
+                            is_completed or  # 完成状态立即更新
+                            status_changed or  # 状态变化立即更新
+                            (is_running and (last_update is None or (current_time - last_update).total_seconds() >= 1.0)) or  # 运行中每秒更新
+                            (is_pending and (last_update is None or (current_time - last_update).total_seconds() >= 2.0))  # 等待中每2秒更新
                         )
-                        
+
                         if should_update:
                             self._update_table_row(i, execution)
                             self._last_update_time[exec_id_item] = current_time
-                            
+                            self._last_update_time[last_status_key] = exec_status  # 记录上次状态
+
                             # 只更新正在运行或刚完成的脚本的输出
                             if exec_status in ['RUNNING', 'SUCCESS', 'FAILED', 'ERROR', 'TIMEOUT']:
                                 if exec_id_item:
@@ -831,8 +909,7 @@ class ExecutionPanel(QWidget):
             status = execution_info.get('status')
             error = execution_info.get('error', '')
             exec_id = execution_info.get('id')
-            progress = execution_info.get('progress', 0)
-            
+
             # 首先检查执行状态
             if status == 'TIMEOUT':
                 return TestResult.TIMEOUT
@@ -1042,7 +1119,72 @@ class ExecutionPanel(QWidget):
         
         except Exception as e:
             self.logger.error(f"Error updating statistics: {e}")
-    
+
+    # ========== 控制按钮回调方法 ==========
+    def _on_refresh_clicked(self):
+        """刷新按钮点击"""
+        self.refresh_requested.emit()
+        self.logger.info("Refresh requested from execution panel")
+
+    def _on_start_clicked(self):
+        """开始执行按钮点击"""
+        self.start_requested.emit()
+        self.logger.info("Start execution requested from execution panel")
+
+    def _on_stop_clicked(self):
+        """停止执行按钮点击"""
+        self.stop_requested.emit()
+        self.logger.info("Stop execution requested from execution panel")
+
+    def _on_pause_clicked(self):
+        """暂停按钮点击"""
+        self.pause_requested.emit()
+        self.logger.info("Pause execution requested from execution panel")
+
+    def _on_resume_clicked(self):
+        """继续按钮点击"""
+        self.resume_requested.emit()
+        self.logger.info("Resume execution requested from execution panel")
+
+    def _on_skip_clicked(self):
+        """跳过当前脚本按钮点击"""
+        if not self._is_executing:
+            return
+
+        try:
+            exec_id = self._current_execution_id or self._current_batch_id
+            if exec_id:
+                self._append_output("正在跳过当前脚本...", QColor(255, 165, 0))
+                self.logger.info(f"Skipping current script in execution: {exec_id}")
+
+                # 如果是单个执行，直接取消
+                if self._current_execution_id:
+                    self.stop_execution()
+                else:
+                    # 批量执行：调用执行服务跳过当前脚本
+                    result = self.execution_service.skip_current_script(exec_id)
+                    if result.get('success'):
+                        self._append_output("已跳过当前脚本", QColor(0, 128, 0))
+                    else:
+                        error = result.get('error', 'Unknown error')
+                        self._append_output(f"跳过失败: {error}", QColor(255, 0, 0))
+
+        except Exception as e:
+            self.logger.error(f"Error skipping script: {e}", exc_info=True)
+            self._append_output(f"跳过脚本时出错: {e}", QColor(255, 0, 0))
+
+    def set_button_states(self, is_executing: bool, is_paused: bool = False):
+        """设置按钮状态
+
+        Args:
+            is_executing: 是否正在执行
+            is_paused: 是否已暂停
+        """
+        self.start_btn.setEnabled(not is_executing)
+        self.stop_btn.setEnabled(is_executing and not is_paused)
+        self.pause_btn.setEnabled(is_executing and not is_paused)
+        self.resume_btn.setEnabled(is_paused)
+
     def set_suite_name(self, suite_name: str):
         """设置当前方案名称
         

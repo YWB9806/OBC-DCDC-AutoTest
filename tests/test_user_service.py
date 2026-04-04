@@ -27,14 +27,15 @@ class TestUserService(unittest.TestCase):
         """测试密码哈希"""
         password = "test123"
         hashed = self.service._hash_password(password)
-        
+
         self.assertIsNotNone(hashed)
         self.assertNotEqual(hashed, password)
-        self.assertEqual(len(hashed), 64)  # SHA-256 produces 64 hex characters
-        
-        # 相同密码应产生相同哈希
-        hashed2 = self.service._hash_password(password)
-        self.assertEqual(hashed, hashed2)
+        # PBKDF2 哈希格式: salt_hex(32):key_hex(64)
+        self.assertIn(':', hashed)
+
+        # 验证密码可以被验证
+        self.assertTrue(self.service._verify_password(password, hashed))
+        self.assertFalse(self.service._verify_password('wrong', hashed))
     
     def test_generate_token(self):
         """测试生成令牌"""

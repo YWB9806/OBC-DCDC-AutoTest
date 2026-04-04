@@ -4,6 +4,7 @@
 """
 
 import psutil
+import os
 import time
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
@@ -88,7 +89,7 @@ class PerformanceMonitorService:
             cpu_count = psutil.cpu_count(logical=False)
             cpu_count_logical = psutil.cpu_count(logical=True)
             memory = psutil.virtual_memory()
-            disk = psutil.disk_usage('/')
+            disk = psutil.disk_usage(os.getcwd())
             
             return {
                 'cpu_count': cpu_count,
@@ -262,7 +263,7 @@ class PerformanceMonitorService:
                 # 收集系统指标
                 cpu_percent = psutil.cpu_percent(interval=1)
                 memory = psutil.virtual_memory()
-                disk = psutil.disk_usage('/')
+                disk = psutil.disk_usage(os.getcwd())
                 
                 # 收集进程指标
                 process = psutil.Process()

@@ -12,21 +12,22 @@ from AppCode.interfaces.i_script_manager import IScriptManager
 from AppCode.utils.validators import PathValidator
 from AppCode.utils.exceptions import ScriptNotFoundError, ValidationError
 from AppCode.utils.constants import ScriptStatus
+from AppCode.infrastructure.cache import LRUCache
 
 
 class ScriptManager(IScriptManager):
     """脚本管理器实现"""
-    
+
     def __init__(self, logger=None, cache_manager=None):
         """初始化脚本管理器
-        
+
         Args:
             logger: 日志记录器
             cache_manager: 缓存管理器
         """
         self.logger = logger
         self.cache_manager = cache_manager
-        self._scripts_cache = {}
+        self._scripts_cache = LRUCache(capacity=500)
     
     def scan_scripts(self, root_path: str) -> List[Dict[str, Any]]:
         """扫描脚本目录
@@ -39,24 +40,42 @@ class ScriptManager(IScriptManager):
         """
         if self.logger:
             self.logger.info(f"Scanning scripts in: {root_path}")
-        
+
         PathValidator.validate_directory_path(root_path, must_exist=True)
-        
+
         scripts = []
         for root, dirs, files in os.walk(root_path):
             for file in files:
                 if file.endswith('.py') and not file.startswith('__'):
                     script_path = os.path.join(root, file)
                     try:
-                        script_info = self.get_script_info(script_path)
+                        # 快速扫描：不读取文件内容，不做重复验证
+                        script_info = self._fast_script_info(script_path)
                         scripts.append(script_info)
                     except Exception as e:
                         if self.logger:
                             self.logger.warning(f"Failed to process {script_path}: {e}")
-        
+
+        # 自然排序：按文件名数字顺序排序（1.py, 2.py, 3.py... 而不是 1.py, 10.py, 11.py...）
+        import re
+        def natural_sort_key(script_info):
+            """自然排序键函数"""
+            name = script_info.get('name', '')
+            # 提取文件名中的数字部分进行排序
+            parts = re.split(r'(\d+)', name)
+            result = []
+            for part in parts:
+                if part.isdigit():
+                    result.append(int(part))
+                else:
+                    result.append(part.lower())
+            return result
+
+        scripts.sort(key=natural_sort_key)
+
         if self.logger:
-            self.logger.info(f"Found {len(scripts)} scripts")
-        
+            self.logger.info(f"Found {len(scripts)} scripts (sorted naturally)")
+
         return scripts
     
     def get_script_info(self, script_path: str) -> Dict[str, Any]:
@@ -69,8 +88,9 @@ class ScriptManager(IScriptManager):
             脚本信息字典
         """
         # 检查缓存
-        if script_path in self._scripts_cache:
-            return self._scripts_cache[script_path]
+        cached = self._scripts_cache.get(script_path)
+        if cached is not None:
+            return cached
         
         PathValidator.validate_script_path(script_path)
         
@@ -90,7 +110,7 @@ class ScriptManager(IScriptManager):
         }
         
         # 缓存结果
-        self._scripts_cache[script_path] = script_info
+        self._scripts_cache.put(script_path, script_info)
         
         return script_info
     
@@ -191,6 +211,35 @@ class ScriptManager(IScriptManager):
         
         return tree
     
+    def _fast_script_info(self, script_path: str) -> Dict[str, Any]:
+        """快速获取脚本信息（扫描时使用，不读取文件内容）
+
+        Args:
+            script_path: 脚本路径
+
+        Returns:
+            脚本信息字典
+        """
+        cached = self._scripts_cache.get(script_path)
+        if cached is not None:
+            return cached
+
+        # 单次 stat 调用获取所有文件属性
+        st = os.stat(script_path)
+        script_info = {
+            'path': script_path,
+            'name': os.path.basename(script_path),
+            'directory': os.path.dirname(script_path),
+            'size': st.st_size,
+            'modified_time': st.st_mtime,
+            'category': self._extract_category(script_path),
+            'description': '',  # 延迟加载，不在扫描时读取文件
+            'status': ScriptStatus.IDLE
+        }
+
+        self._scripts_cache.put(script_path, script_info)
+        return script_info
+
     def _extract_category(self, script_path: str) -> str:
         """从路径提取分类"""
         # 从路径中提取分类信息
@@ -210,10 +259,19 @@ class ScriptManager(IScriptManager):
                     if line.startswith('"""') or line.startswith("'''"):
                         # 提取文档字符串
                         return line.strip('"""').strip("'''").strip()
-        except Exception:
-            pass
+        except Exception as e:
+            if hasattr(self, 'logger') and self.logger:
+                self.logger.debug(f"Failed to read docstring: {e}")
         return ""
     
+    def get_all_scripts(self) -> List[Dict[str, Any]]:
+        """获取所有已缓存的脚本
+
+        Returns:
+            脚本信息列表
+        """
+        return self._scripts_cache.values()
+
     def clear_cache(self):
         """清空缓存"""
         self._scripts_cache.clear()

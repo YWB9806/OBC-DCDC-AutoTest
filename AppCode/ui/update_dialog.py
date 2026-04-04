@@ -105,7 +105,7 @@ class UpdateDialog(QDialog):
                 formatted_date = date_obj.strftime('%Y-%m-%d %H:%M')
                 date_label = QLabel(f"发布日期: {formatted_date}")
                 layout.addWidget(date_label)
-            except:
+            except Exception:
                 pass
         
         group.setLayout(layout)
@@ -254,7 +254,8 @@ class UpdateDialog(QDialog):
                 json.dump(config, f, indent=4, ensure_ascii=False)
                 
         except Exception as e:
-            print(f"保存跳过版本配置失败: {e}")
+            import logging
+            logging.getLogger(__name__).error(f"保存跳过版本配置失败: {e}")
 
 
 def show_update_dialog(parent=None, force_check: bool = False) -> Optional[QDialog]:
@@ -316,5 +317,5 @@ def _should_skip_version(version: str) -> bool:
         skip_version = config.get('skip_version')
         return skip_version == version
         
-    except:
+    except Exception:
         return False

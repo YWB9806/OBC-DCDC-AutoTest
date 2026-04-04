@@ -253,7 +253,7 @@ class ManageSuitesDialog(QDialog):
                     from datetime import datetime
                     dt = datetime.fromisoformat(last_exec)
                     last_exec = dt.strftime('%Y-%m-%d %H:%M')
-                except:
+                except Exception:
                     pass
             last_exec_item = QTableWidgetItem(last_exec)
             last_exec_item.setTextAlignment(Qt.AlignCenter)
@@ -318,7 +318,7 @@ class ManageSuitesDialog(QDialog):
         if isinstance(script_paths, str):
             try:
                 script_paths = json.loads(script_paths)
-            except:
+            except Exception:
                 script_paths = []
         
         for i, path in enumerate(script_paths, 1):

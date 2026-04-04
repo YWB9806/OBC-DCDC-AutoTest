@@ -11,9 +11,9 @@ from AppCode.infrastructure.config_manager import ConfigManager
 class SettingsDialog(QDialog):
     """设置对话框"""
     
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, config_manager=None):
         super().__init__(parent)
-        self.config_manager = ConfigManager()
+        self.config_manager = config_manager or ConfigManager()
         self.init_ui()
         self.load_settings()
         

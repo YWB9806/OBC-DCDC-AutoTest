@@ -3,8 +3,8 @@ name: Build and Release
 on:
   push:
     tags:
-      - 'v*'  # 当推送v开头的标签时触发（如v1.0.0）
-  workflow_dispatch:  # 允许手动触发
+      - 'v*'
+  workflow_dispatch:
 
 jobs:
   build-windows:
@@ -16,7 +16,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.8'
+          python-version: '3.10'
 
       - name: Install dependencies
         run: |
@@ -25,8 +25,7 @@ jobs:
           pip install pyinstaller
 
       - name: Build with PyInstaller
-        run: |
-          pyinstaller build.spec
+        run: pyinstaller build.spec
 
       - name: Create ZIP archive
         run: |
@@ -48,12 +47,12 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.8'
+          python-version: '3.10'
 
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libxcb-xinerama0 libxcb-cursor0
+          sudo apt-get install -y libxcb-xinerama0 libxcb-cursor0 libegl1 libgl1
 
       - name: Install dependencies
         run: |
@@ -62,8 +61,7 @@ jobs:
           pip install pyinstaller
 
       - name: Build with PyInstaller
-        run: |
-          pyinstaller build.spec
+        run: pyinstaller build.spec
 
       - name: Create TAR archive
         run: |
@@ -85,7 +83,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.8'
+          python-version: '3.10'
 
       - name: Install dependencies
         run: |
@@ -94,16 +92,12 @@ jobs:
           pip install pyinstaller
 
       - name: Build with PyInstaller
-        run: |
-          pyinstaller build.spec
+        run: pyinstaller build.spec
 
-      - name: Create DMG (optional)
+      - name: Create archive
         run: |
           cd dist
-          # 如果需要创建DMG，可以使用create-dmg工具
-          # brew install create-dmg
-          # create-dmg --volname "OBC-DCDC AutoTest" --window-pos 200 120 --window-size 800 400 OBC-DCDC-AutoTest.dmg OBC-DCDC-AutoTest.app
-          tar -czf OBC-DCDC-AutoTest-macOS.tar.gz OBC-DCDC-AutoTest.app
+          tar -czf OBC-DCDC-AutoTest-macOS.tar.gz OBC-DCDC-AutoTest
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -136,59 +130,44 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Version: $VERSION"
 
-      - name: Generate release notes
-        id: release_notes
-        run: |
-          cat > release_notes.md << 'EOF'
-          ## 🎉 新版本发布
-
-          ### 📦 下载
-          
-          请根据您的操作系统选择对应的安装包：
-          
-          - **Windows**: `OBC-DCDC-AutoTest-Windows.zip`
-          - **Linux**: `OBC-DCDC-AutoTest-Linux.tar.gz`
-          - **macOS**: `OBC-DCDC-AutoTest-macOS.tar.gz`
-
-          ### ✨ 更新内容
-
-          请查看 [CHANGELOG.md](CHANGELOG.md) 了解详细更新内容。
-
-          ### 📝 安装说明
-
-          #### Windows
-          1. 下载 `OBC-DCDC-AutoTest-Windows.zip`
-          2. 解压到任意目录
-          3. 运行 `OBC-DCDC-AutoTest.exe`
-
-          #### Linux
-          1. 下载 `OBC-DCDC-AutoTest-Linux.tar.gz`
-          2. 解压: `tar -xzf OBC-DCDC-AutoTest-Linux.tar.gz`
-          3. 运行: `./OBC-DCDC-AutoTest/OBC-DCDC-AutoTest`
-
-          #### macOS
-          1. 下载 `OBC-DCDC-AutoTest-macOS.tar.gz`
-          2. 解压: `tar -xzf OBC-DCDC-AutoTest-macOS.tar.gz`
-          3. 将 `OBC-DCDC-AutoTest.app` 拖到应用程序文件夹
-          4. 首次运行可能需要在系统偏好设置中允许
-
-          ### 🐛 问题反馈
-
-          如遇到问题，请在 [Issues](https://github.com/YWB9806/OBC-DCDC-AutoTest/issues) 中反馈。
-
-          ### 📚 文档
-
-          - [用户手册](documents/软件开发手册.md)
-          - [部署指南](documents/部署指南.md)
-          - [API文档](documents/API接口文档.md)
-          EOF
-
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.get_version.outputs.version }}
-          name: Release ${{ steps.get_version.outputs.version }}
-          body_path: release_notes.md
+          name: OBC-DCDC AutoTest ${{ steps.get_version.outputs.version }}
+          body: |
+            ## OBC-DCDC AutoTest ${{ steps.get_version.outputs.version }}
+
+            ### 下载
+
+            请根据您的操作系统选择对应的安装包：
+
+            | 平台 | 文件 |
+            |------|------|
+            | Windows | `OBC-DCDC-AutoTest-Windows.zip` |
+            | Linux | `OBC-DCDC-AutoTest-Linux.tar.gz` |
+            | macOS | `OBC-DCDC-AutoTest-macOS.tar.gz` |
+
+            ### 安装说明
+
+            **Windows**
+            1. 下载 `OBC-DCDC-AutoTest-Windows.zip`
+            2. 解压到任意目录
+            3. 双击 `OBC-DCDC-AutoTest.exe` 运行
+
+            **Linux**
+            1. 下载 `OBC-DCDC-AutoTest-Linux.tar.gz`
+            2. 解压: `tar -xzf OBC-DCDC-AutoTest-Linux.tar.gz`
+            3. 运行: `./OBC-DCDC-AutoTest/OBC-DCDC-AutoTest`
+
+            **macOS**
+            1. 下载 `OBC-DCDC-AutoTest-macOS.tar.gz`
+            2. 解压: `tar -xzf OBC-DCDC-AutoTest-macOS.tar.gz`
+            3. 首次运行可能需要在系统设置中允许
+
+            详细更新内容请查看 [CHANGELOG.md](CHANGELOG.md)。
+
+            问题反馈: [Issues](https://github.com/YWB9806/OBC-DCDC-AutoTest/issues)
           draft: false
           prerelease: ${{ contains(steps.get_version.outputs.version, 'beta') || contains(steps.get_version.outputs.version, 'alpha') }}
           files: |
@@ -197,15 +176,3 @@ jobs:
             artifacts/macos-build/OBC-DCDC-AutoTest-macOS.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Notify success
-        if: success()
-        run: |
-          echo "✅ Release created successfully!"
-          echo "Version: ${{ steps.get_version.outputs.version }}"
-
-      - name: Notify failure
-        if: failure()
-        run: |
-          echo "❌ Release creation failed!"
-          exit 1

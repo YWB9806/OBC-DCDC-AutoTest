@@ -55,16 +55,12 @@ class ScriptBrowser(QWidget):
         
         # 搜索栏
         search_layout = QHBoxLayout()
-        
+
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("搜索脚本...")
-        self.search_input.textChanged.connect(self._on_search)
+        self.search_input.setPlaceholderText("搜索脚本名称...")
+        self.search_input.textChanged.connect(self._on_search_text_changed)
         search_layout.addWidget(self.search_input)
-        
-        self.search_btn = QPushButton("搜索")
-        self.search_btn.clicked.connect(self._on_search)
-        search_layout.addWidget(self.search_btn)
-        
+
         layout.addLayout(search_layout)
         
         # 方案操作栏（一行显示：测试方案 + 选择方案 + 一键折叠 + 一键展开）
@@ -472,17 +468,25 @@ class ScriptBrowser(QWidget):
         total = len(self._filtered_scripts)
         self.stats_label.setText(f"总计: {total} 个脚本")
     
-    def _on_search(self):
-        """搜索脚本"""
-        keyword = self.search_input.text().strip()
-        
+    def _on_search_text_changed(self):
+        """搜索框文字变化时实时过滤"""
+        keyword = self.search_input.text().strip().lower()
+
         if not keyword:
             self._filtered_scripts = self._scripts.copy()
         else:
-            self._filtered_scripts = self.script_service.search_scripts(keyword)
-        
+            # 在内存中过滤，匹配文件名（不含路径）
+            self._filtered_scripts = [
+                s for s in self._scripts
+                if keyword in s['name'].lower()
+            ]
+
         self._update_tree()
         self._update_stats()
+
+        # 搜索时自动展开所有节点，方便查看匹配结果
+        if keyword:
+            self.tree_widget.expandAll()
     
     def _on_collapse_all(self):
         """一键折叠所有节点"""

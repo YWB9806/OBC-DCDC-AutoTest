@@ -80,7 +80,7 @@ class MainWindow(QMainWindow):
         self.setGeometry(100, 100, 800, 700)
         
         # 设置窗口图标
-        icon_path = os.path.join('resources', 'app图标.png')
+        icon_path = os.path.join('resources', 'app_icon.png')
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
             self.logger.info(f"Window icon loaded from: {icon_path}")
@@ -516,19 +516,10 @@ class MainWindow(QMainWindow):
         """显示关于对话框"""
         from version import get_version_string
         about_text = f"""
-        <h2>Python脚本批量执行工具</h2>
+        <h2>富特科技-测试部-自动化测试软件</h2>
         <p>版本: {get_version_string()}</p>
-        <p>一款用于批量管理和执行Python测试脚本的桌面应用程序。</p>
-        <p>Copyright © 2024-2025</p>
-        <br>
-        <p><b>功能特性：</b></p>
-        <ul>
-        <li>支持批量执行Python脚本</li>
-        <li>支持添加任意位置的脚本文件或文件夹</li>
-        <li>实时监控执行过程和结果</li>
-        <li>测试方案管理</li>
-        <li>用户权限管理</li>
-        </ul>
+        <p>开发者: Yangwenbo</p>
+        <p>联系方式: ywb9806@163.com</p>
         """
         QMessageBox.about(self, "关于", about_text)
 

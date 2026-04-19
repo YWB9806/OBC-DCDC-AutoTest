@@ -7,6 +7,7 @@ import subprocess
 import threading
 import time
 import queue
+import re
 from typing import Dict, Any, Optional, Callable
 from datetime import datetime
 import psutil  # 用于进程暂停/恢复
@@ -17,12 +18,24 @@ from AppCode.utils.exceptions import ExecutionError
 from AppCode.core.output_monitor import OutputMonitor
 
 
+# 结果关键词正则（用于快速检测输出中的结果）
+_PASS_PATTERN = re.compile(r'合格|通过', re.IGNORECASE)
+_FAIL_PATTERN = re.compile(r'不合格|不通过', re.IGNORECASE)
+_PASS_EN_PATTERN = re.compile(r'(?<!\w)pass(?!\w)', re.IGNORECASE)
+_FAIL_EN_PATTERN = re.compile(r'(?<!\w)fail(?!ed?\w)', re.IGNORECASE)
+_PENDING_PATTERN = re.compile(r'待判定|需要确认')
+_ERROR_PATTERN = re.compile(r'exception|traceback', re.IGNORECASE)
+
+
 class ExecutionEngine(IExecutionEngine):
     """执行引擎实现"""
-    
+
+    # 结果关键词后无输出的默认超时秒数（可由用户在设置中配置）
+    DEFAULT_RESULT_IDLE_TIMEOUT = 5
+
     def __init__(self, logger=None, max_workers: int = 1, config_manager=None):
         """初始化执行引擎
-        
+
         Args:
             logger: 日志记录器
             max_workers: 最大并发执行数（车载ECU测试必须为1，硬件资源独占）
@@ -44,15 +57,22 @@ class ExecutionEngine(IExecutionEngine):
         self._running = False
         self._paused_executions = set()  # 新增：暂停的执行ID集合
         self._pause_lock = threading.Lock()  # 新增：暂停操作锁
-        
+
         # 从配置读取超时时间，默认3600秒（1小时）
         if config_manager:
             self._timeout = config_manager.get('execution.script_timeout', DEFAULT_TIMEOUT)
+            self._result_idle_timeout = config_manager.get(
+                'execution.result_idle_timeout', self.DEFAULT_RESULT_IDLE_TIMEOUT
+            )
         else:
             self._timeout = DEFAULT_TIMEOUT
-        
+            self._result_idle_timeout = self.DEFAULT_RESULT_IDLE_TIMEOUT
+
         if self.logger:
-            self.logger.info(f"ExecutionEngine initialized with timeout: {self._timeout}s")
+            self.logger.info(
+                f"ExecutionEngine initialized: timeout={self._timeout}s, "
+                f"result_idle_timeout={self._result_idle_timeout}s"
+            )
     
     def execute_script(
         self,
@@ -778,48 +798,71 @@ class ExecutionEngine(IExecutionEngine):
                 if self.logger:
                     self.logger.error(f"Worker error: {e}")
     
+    def _has_result_keyword(self, output_lines: list) -> bool:
+        """快速检测输出中是否已包含结果关键词（合格/不合格/通过/不通过/pass/fail）"""
+        # 只检查最后20行，提高效率
+        for line in reversed(output_lines[-20:]):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if _PASS_PATTERN.search(stripped) and '不合格' not in stripped:
+                return True
+            if _FAIL_PATTERN.search(stripped):
+                return True
+            if _PASS_EN_PATTERN.search(stripped) and not _FAIL_EN_PATTERN.search(stripped):
+                return True
+            if _FAIL_EN_PATTERN.search(stripped):
+                return True
+        return False
+
     def _execute_script_internal(self, execution_id: str, execution_info: Dict[str, Any]):
-        """内部执行脚本"""
+        """内部执行脚本（增强版 - 多重防卡死机制）
+
+        防卡死机制:
+        1. 结果关键词后无输出超时: 检测到合格/不合格后，若用户配置的秒数内无新输出则强制结束
+        2. 总超时: 超过用户配置的单脚本最大运行时间，直接强制结束
+        3. 进程退出码检测: 进程已退出但循环未退出时的兜底
+        """
         output_monitor = None
         try:
             # 检查是否已取消
             with self._lock:
                 if execution_info['status'] == ExecutionStatus.CANCELLED:
                     return
-            
+
             # 更新状态（使用锁保护）
             with self._lock:
                 execution_info['status'] = ExecutionStatus.RUNNING
                 execution_info['start_time'] = datetime.now()
-            
+
             if self.logger:
                 self.logger.info(f"Executing script: {execution_info['script_path']}")
-            
+
             # 创建输出监控器（用于捕获Log4NetWrapper等输出）
             def on_file_output(line):
                 with self._lock:
                     execution_info['output'].append(f"[FILE] {line}")
-            
+
             output_monitor = OutputMonitor(
                 execution_info['script_path'],
                 output_callback=on_file_output
             )
             output_monitor.start()
-            
+
             # 构建命令
             cmd = ['python', execution_info['script_path']]
-            
+
             # 添加参数
             for key, value in execution_info['params'].items():
                 cmd.extend([f'--{key}', str(value)])
-            
+
             # 启动进程（实时输出模式，使用unbuffered模式）
             import os
             import sys
             env = os.environ.copy()
             env['PYTHONUNBUFFERED'] = '1'  # 禁用Python输出缓冲
             env['PYTHONIOENCODING'] = 'utf-8'  # 设置Python输出编码为UTF-8，支持emoji等特殊字符
-            
+
             # Windows平台下隐藏控制台窗口
             startupinfo = None
             creationflags = 0
@@ -828,7 +871,7 @@ class ExecutionEngine(IExecutionEngine):
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 startupinfo.wShowWindow = subprocess.SW_HIDE
                 creationflags = subprocess.CREATE_NO_WINDOW
-            
+
             # 使用二进制模式读取，避免编码问题
             process = subprocess.Popen(
                 cmd,
@@ -839,45 +882,48 @@ class ExecutionEngine(IExecutionEngine):
                 startupinfo=startupinfo,
                 creationflags=creationflags
             )
-            
+
             with self._lock:
                 self._processes[execution_id] = process
-            
+
             # 智能解码函数：尝试多种编码
             def smart_decode(byte_data):
                 """智能解码二进制数据，尝试UTF-8和GBK编码"""
                 if not byte_data:
                     return ""
-                
+
                 # 首先尝试UTF-8（支持emoji）
                 try:
                     return byte_data.decode('utf-8')
                 except UnicodeDecodeError:
                     pass
-                
+
                 # 如果UTF-8失败，尝试GBK（支持C# DLL输出）
                 try:
                     return byte_data.decode('gbk')
                 except UnicodeDecodeError:
                     pass
-                
+
                 # 如果都失败，使用UTF-8并替换错误字符
                 return byte_data.decode('utf-8', errors='replace')
-            
-            # 实时读取输出（改进版 - 使用非阻塞读取避免卡死）
+
+            # ===== 防卡死机制变量 =====
             stderr_lines = []
             timeout = getattr(self, '_timeout', DEFAULT_TIMEOUT)
+            result_idle_timeout = getattr(self, '_result_idle_timeout', self.DEFAULT_RESULT_IDLE_TIMEOUT)
             start_time = time.time()
+            result_detected = False              # 是否已检测到结果关键词
+            result_detected_time = 0.0           # 检测到结果关键词的时间
+            last_output_count = 0                # 上次检查时的输出行数
 
             while True:
-                # 检查超时
-                if time.time() - start_time > timeout:
+                now = time.time()
+
+                # === 机制1: 总超时（用户配置的单脚本最大运行时间） ===
+                if now - start_time > timeout:
                     if self.logger:
-                        self.logger.warning(f"Script execution timeout: {execution_id}")
-
-                    # 使用安全终止方法（强制杀死进程树）
+                        self.logger.warning(f"Script execution timeout ({timeout}s): {execution_id}")
                     self._terminate_process_safe(process, execution_id)
-
                     with self._lock:
                         execution_info['output'].append("执行超时")
                         execution_info['status'] = ExecutionStatus.TIMEOUT
@@ -885,7 +931,31 @@ class ExecutionEngine(IExecutionEngine):
                         execution_info['test_result'] = 'timeout'
                     break
 
-                # 检查是否被取消（使用锁保护）
+                # === 机制2: 结果关键词后无输出超时 ===
+                # 如果已检测到结果关键词，且超过用户配置的秒数没有新输出，认为脚本已完成
+                if result_detected and (now - result_detected_time) > result_idle_timeout:
+                    with self._lock:
+                        current_output_count = len(execution_info['output'])
+                    if current_output_count == last_output_count:
+                        # 确实没有新输出了，强制结束进程
+                        if self.logger:
+                            self.logger.info(
+                                f"Result detected and no output for {result_idle_timeout}s, "
+                                f"force completing: {execution_id}"
+                            )
+                        self._terminate_process_safe(process, execution_id)
+                        with self._lock:
+                            execution_info['status'] = ExecutionStatus.SUCCESS
+                            execution_info['end_time'] = datetime.now()
+                            execution_info['test_result'] = self._parse_test_result(execution_info['output'])
+                            execution_info['progress'] = 100
+                        break
+                    else:
+                        # 有新输出，重置计时
+                        last_output_count = current_output_count
+                        result_detected_time = now
+
+                # === 检查是否被取消 ===
                 should_cancel = False
                 with self._lock:
                     if execution_info['status'] == ExecutionStatus.CANCELLED:
@@ -904,11 +974,6 @@ class ExecutionEngine(IExecutionEngine):
 
                 # 使用非阻塞方式读取stdout
                 try:
-                    # 尝试读取一行，但使用超时机制
-                    line_bytes = None
-
-                    # 检查是否有数据可读（Windows兼容方式）
-                    # 使用threading.Timer实现超时读取
                     read_result = [None]
                     read_error = [None]
 
@@ -949,6 +1014,20 @@ class ExecutionEngine(IExecutionEngine):
                         execution_info['output'].append(line)
                         # 更新进度（简单估算）
                         execution_info['progress'] = min(90, len(execution_info['output']) * 2)
+
+                    # 更新最后输出时间
+                    last_output_time = time.time()
+
+                    # 检测结果关键词
+                    if not result_detected and self._has_result_keyword(execution_info['output']):
+                        result_detected = True
+                        result_detected_time = time.time()
+                        with self._lock:
+                            last_output_count = len(execution_info['output'])
+                        if self.logger:
+                            self.logger.info(f"Result keyword detected in output for {execution_id}, "
+                                             f"will auto-complete after {self.RESULT_IDLE_TIMEOUT}s idle")
+
                 elif poll_result is not None:
                     # 进程已结束且没有更多输出，读取剩余数据后退出
                     if self.logger:
@@ -995,15 +1074,15 @@ class ExecutionEngine(IExecutionEngine):
 
                 # 短暂休眠避免CPU占用过高
                 time.sleep(0.05)
-            
+
             return_code = process.returncode
-            
+
             # 更新状态（使用锁保护）
             with self._lock:
                 # 只有在未被取消或超时的情况下才更新为成功/失败
                 if execution_info['status'] not in [ExecutionStatus.CANCELLED, ExecutionStatus.TIMEOUT]:
                     execution_info['end_time'] = datetime.now()
-                    
+
                     if return_code == 0:
                         execution_info['status'] = ExecutionStatus.SUCCESS
                         # 解析测试结果
@@ -1012,7 +1091,7 @@ class ExecutionEngine(IExecutionEngine):
                         execution_info['status'] = ExecutionStatus.FAILED
                         execution_info['error'] = '\n'.join(stderr_lines) if stderr_lines else f"Exit code: {return_code}"
                         execution_info['test_result'] = 'fail'
-                    
+
                     execution_info['progress'] = 100
                 else:
                     # 已取消或超时，确保设置结束时间
@@ -1023,13 +1102,13 @@ class ExecutionEngine(IExecutionEngine):
                         execution_info['test_result'] = 'pending'
                     elif execution_info['status'] == ExecutionStatus.TIMEOUT:
                         execution_info['test_result'] = 'timeout'
-            
+
             if self.logger:
                 self.logger.info(
                     f"Script execution completed: {execution_id} - "
                     f"Status: {execution_info['status']}"
                 )
-            
+
             # 调用回调
             if execution_info.get('callback'):
                 try:
@@ -1037,7 +1116,7 @@ class ExecutionEngine(IExecutionEngine):
                 except Exception as e:
                     if self.logger:
                         self.logger.error(f"Callback error: {e}")
-        
+
         except Exception as e:
             with self._lock:
                 # 只有在未被取消或超时的情况下才更新为错误
@@ -1046,15 +1125,15 @@ class ExecutionEngine(IExecutionEngine):
                     execution_info['error'] = str(e)
                     execution_info['test_result'] = 'error'
                 execution_info['end_time'] = datetime.now()
-            
+
             if self.logger:
                 self.logger.error(f"Execution error for {execution_id}: {e}", exc_info=True)
-        
+
         finally:
             # 停止输出监控器
             if output_monitor:
                 output_monitor.stop()
-            
+
             # 清理进程引用
             with self._lock:
                 self._processes.pop(execution_id, None)
@@ -1157,58 +1236,69 @@ class ExecutionEngine(IExecutionEngine):
     
     def set_timeout(self, timeout: int):
         """设置执行超时时间
-        
+
         Args:
             timeout: 超时时间（秒）
         """
         self._timeout = timeout
         if self.logger:
             self.logger.info(f"Timeout set to: {timeout} seconds")
+
+    def set_result_idle_timeout(self, timeout: int):
+        """设置结果关键词后空闲超时时间
+
+        Args:
+            timeout: 超时时间（秒）
+        """
+        self._result_idle_timeout = timeout
+        if self.logger:
+            self.logger.info(f"Result idle timeout set to: {timeout} seconds")
     
     def _parse_test_result(self, output_lines: list) -> str:
-        """解析测试结果
-        
+        """解析测试结果（增强版 - 使用正则提高准确性）
+
         Args:
             output_lines: 输出行列表
-            
+
         Returns:
             测试结果: 'pass', 'fail', 'pending', 'error', 'timeout'
         """
-        # 从后往前查找，最后的结果最准确
+        # 从后往前查找，最后的结果最准确，最多检查50行
+        check_count = 0
         for line in reversed(output_lines):
+            check_count += 1
+            if check_count > 50:
+                break
+
             line_stripped = line.strip()
             if not line_stripped:
                 continue
-            
+
             line_lower = line_stripped.lower()
-            
+
             # 优先检查明确的合格标识（不合格中也包含"合格"，所以要先排除）
-            # 添加对"通过"的支持
-            if '合格' in line_stripped and '不合格' not in line_stripped:
+            if ('合格' in line_stripped and '不合格' not in line_stripped) or \
+               ('通过' in line_stripped and '不通过' not in line_stripped):
                 return 'pass'
-            elif '通过' in line_stripped and '不通过' not in line_stripped:
+            elif _PASS_EN_PATTERN.search(line_stripped) and not _FAIL_EN_PATTERN.search(line_stripped):
                 return 'pass'
-            elif 'pass' in line_lower and 'fail' not in line_lower:
-                return 'pass'
-            
+
             # 检查不合格标识
-            elif '不合格' in line_stripped:
+            elif '不合格' in line_stripped or '不通过' in line_stripped:
                 return 'fail'
-            elif '不通过' in line_stripped:
+            elif _FAIL_EN_PATTERN.search(line_stripped):
                 return 'fail'
-            elif 'fail' in line_lower:
-                return 'fail'
-            
+
             # 检查待判定标识
-            elif '待判定' in line_stripped or '需要确认' in line_stripped:
+            elif _PENDING_PATTERN.search(line_stripped):
                 return 'pending'
             elif 'pending' in line_lower or 'to be confirmed' in line_lower:
                 return 'pending'
-            
-            # 检查错误标识（注意：排除"误差"这种正常的测试输出）
-            elif 'exception' in line_lower or 'traceback' in line_lower:
+
+            # 检查错误标识
+            elif _ERROR_PATTERN.search(line_stripped):
                 return 'error'
-        
+
         # 如果没有找到明确的结果标识，返回待判定
         return 'pending'
     

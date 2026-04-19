@@ -1,10 +1,10 @@
 @echo off
-REM Windows平台打包脚本 - v1.2.0
+REM Windows平台打包脚本 - v1.3.0
 REM 用于快速打包测试版本
 REM 使用方法：在虚拟环境中运行此脚本
 
 echo ========================================
-echo 🚀 开始打包 OBC-DCDC-AutoTest v1.2.0
+echo 🚀 开始打包 OBC-DCDC-AutoTest v1.3.0
 echo ========================================
 
 REM 1. 检查Python环境
@@ -71,8 +71,8 @@ set /p CREATE_ZIP="是否创建压缩包? (y/n): "
 if /i "%CREATE_ZIP%"=="y" (
     echo.
     echo 📦 创建压缩包...
-    powershell -Command "Compress-Archive -Path 'dist\OBC-DCDC-AutoTest' -DestinationPath 'dist\OBC-DCDC-AutoTest-v1.2.0-Windows.zip' -Force"
-    echo ✅ 压缩包已创建: dist\OBC-DCDC-AutoTest-v1.2.0-Windows.zip
+    powershell -Command "Compress-Archive -Path 'dist\OBC-DCDC-AutoTest' -DestinationPath 'dist\OBC-DCDC-AutoTest-v1.3.0-Windows.zip' -Force"
+    echo ✅ 压缩包已创建: dist\OBC-DCDC-AutoTest-v1.3.0-Windows.zip
 )
 
 echo.

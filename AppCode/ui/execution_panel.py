@@ -79,7 +79,7 @@ class ExecutionPanel(QWidget):
         control_layout.setSpacing(10)
 
         # 刷新按钮
-        self.refresh_btn = QPushButton("🔄 刷新")
+        self.refresh_btn = QPushButton("刷新")
         self.refresh_btn.setToolTip("刷新脚本列表 (F5)")
         self.refresh_btn.clicked.connect(self._on_refresh_clicked)
         control_layout.addWidget(self.refresh_btn)
@@ -94,7 +94,7 @@ class ExecutionPanel(QWidget):
         control_layout.addWidget(self.start_btn)
 
         # 停止执行按钮
-        self.stop_btn = QPushButton("⏹ 停止执行")
+        self.stop_btn = QPushButton("停止执行")
         self.stop_btn.setToolTip("停止当前执行 (Shift+F9)")
         self.stop_btn.setStyleSheet("background-color: #f44336; color: white; font-weight: bold;")
         self.stop_btn.setEnabled(False)
@@ -102,7 +102,7 @@ class ExecutionPanel(QWidget):
         control_layout.addWidget(self.stop_btn)
 
         # 暂停按钮
-        self.pause_btn = QPushButton("⏸ 暂停")
+        self.pause_btn = QPushButton("暂停")
         self.pause_btn.setToolTip("暂停执行 (F10)")
         self.pause_btn.setStyleSheet("background-color: #FF9800; color: white; font-weight: bold;")
         self.pause_btn.setEnabled(False)
@@ -120,7 +120,7 @@ class ExecutionPanel(QWidget):
         control_layout.addWidget(QLabel("|"))  # 分隔符
 
         # 跳过当前按钮
-        self.skip_btn = QPushButton("⏭ 跳过当前")
+        self.skip_btn = QPushButton("跳过当前")
         self.skip_btn.setToolTip("跳过当前正在执行的脚本 (Ctrl+K)")
         self.skip_btn.setStyleSheet("background-color: #9C27B0; color: white; font-weight: bold;")
         self.skip_btn.setEnabled(False)

@@ -51,12 +51,15 @@ class TemplateEditDialog(QDialog):
         self.config = config or {}
 
         self.setWindowTitle(f"配置列映射 - {os.path.basename(template_path)}")
-        self.setMinimumSize(700, 550)
+        self.setMinimumSize(800, 650)
+        self.resize(900, 720)
         self._init_ui()
+        self._load_preview()
         self._load_config()
 
     def _init_ui(self):
         """初始化UI"""
+        from PyQt5.QtWidgets import QSplitter, QSpinBox
         layout = QVBoxLayout(self)
 
         # 模板信息
@@ -64,15 +67,21 @@ class TemplateEditDialog(QDialog):
         info_label.setStyleSheet("font-weight: bold; font-size: 11pt;")
         layout.addWidget(info_label)
 
+        # 上下分栏 - 使用 QSplitter 实现可拖拽比例
+        splitter = QSplitter(Qt.Vertical)
+
         # 预览 Excel 前几行
         preview_group = QGroupBox("模板预览")
         preview_layout = QVBoxLayout(preview_group)
         self.preview_table = QTableWidget()
         self.preview_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.preview_table.setMaximumHeight(120)
         preview_layout.addWidget(self.preview_table)
-        layout.addWidget(preview_group)
-        self._load_preview()
+        splitter.addWidget(preview_group)
+
+        # 下半部分容器
+        bottom_widget = QWidget()
+        bottom_layout = QVBoxLayout(bottom_widget)
+        bottom_layout.setContentsMargins(0, 0, 0, 0)
 
         # 匹配配置
         match_group = QGroupBox("匹配配置")
@@ -91,14 +100,13 @@ class TemplateEditDialog(QDialog):
         match_layout.addWidget(self.match_field_combo, 1)
 
         match_layout.addWidget(QLabel("数据起始行:"))
-        from PyQt5.QtWidgets import QSpinBox
         self.data_start_spin = QSpinBox()
         self.data_start_spin.setMinimum(2)
         self.data_start_spin.setMaximum(100)
         self.data_start_spin.setValue(2)
         match_layout.addWidget(self.data_start_spin)
 
-        layout.addWidget(match_group)
+        bottom_layout.addWidget(match_group)
 
         # 列映射表
         map_group = QGroupBox("列映射")
@@ -123,7 +131,16 @@ class TemplateEditDialog(QDialog):
         map_btn_layout.addStretch()
         map_layout.addLayout(map_btn_layout)
 
-        layout.addWidget(map_group)
+        bottom_layout.addWidget(map_group)
+
+        splitter.addWidget(bottom_widget)
+
+        # 设置初始比例: 预览占1, 下方占2
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 2)
+        splitter.setSizes([200, 400])
+
+        layout.addWidget(splitter)
 
         # 底部按钮
         btn_layout = QHBoxLayout()
@@ -168,8 +185,10 @@ class TemplateEditDialog(QDialog):
 
             self.preview_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
 
-        except Exception:
-            pass
+        except Exception as e:
+            self.preview_table.setColumnCount(1)
+            self.preview_table.setRowCount(1)
+            self.preview_table.setItem(0, 0, QTableWidgetItem(f"预览失败: {e}"))
 
     def _load_config(self):
         """加载配置到 UI"""

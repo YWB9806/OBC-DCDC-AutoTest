@@ -75,7 +75,7 @@ class MainWindow(QMainWindow):
     def _init_ui(self):
         """初始化UI"""
         from version import get_version_string
-        self.setWindowTitle(f"Python脚本批量执行工具 v{get_version_string()}")
+        self.setWindowTitle(f"富特科技-测试部-自动化测试软件 v{get_version_string()}")
         # 调整窗口大小：宽度改为800，适应小屏幕显示器
         self.setGeometry(100, 100, 800, 700)
         
@@ -116,22 +116,18 @@ class MainWindow(QMainWindow):
         
         # 右侧：标签页
         self.tab_widget = QTabWidget()
-        
+
         # 执行队列面板（作为第一个标签页）
         self.execution_queue = ExecutionQueuePanel()
         self.queue_tab_index = self.tab_widget.addTab(self.execution_queue, "执行队列")
-        
+
         # 执行控制面板（所有用户可见）
         self.execution_panel = ExecutionPanel(self.container)
         self.execution_tab_index = self.tab_widget.addTab(self.execution_panel, "执行控制")
-        
+
         # 结果查看器（需要权限）
         self.result_viewer = ResultViewer(self.container)
         self.result_tab_index = self.tab_widget.addTab(self.result_viewer, "执行结果")
-
-        # 备份管理面板
-        self.backup_panel = BackupPanel(self.container, self)
-        self.tab_widget.addTab(self.backup_panel, "数据备份")
 
         # 报告面板
         self.report_panel = ReportPanel(self.container, self)
@@ -140,6 +136,10 @@ class MainWindow(QMainWindow):
         # 用户管理面板（仅超级管理员可见）
         self.user_panel = UserPanel(self.container, self)
         self.user_tab_index = self.tab_widget.addTab(self.user_panel, "用户管理")
+
+        # 备份管理面板（放在最右侧）
+        self.backup_panel = BackupPanel(self.container, self)
+        self.tab_widget.addTab(self.backup_panel, "数据备份")
 
         self.main_splitter.addWidget(self.tab_widget)
         
@@ -159,94 +159,66 @@ class MainWindow(QMainWindow):
     def _create_menu_bar(self):
         """创建菜单栏"""
         menubar = self.menuBar()
-        
+
         # 文件菜单
         file_menu = menubar.addMenu("文件(&F)")
-        
+
+        # 添加脚本（原"添加路径"中的单个文件功能）
+        add_script_action = QAction("添加脚本(&S)", self)
+        add_script_action.triggered.connect(self._on_menu_add_script)
+        file_menu.addAction(add_script_action)
+
+        # 添加目录（原"添加路径"中的文件夹功能）
+        add_dir_action = QAction("添加目录(&D)", self)
+        add_dir_action.triggered.connect(self._on_menu_add_directory)
+        file_menu.addAction(add_dir_action)
+
+        file_menu.addSeparator()
+
         refresh_action = QAction("刷新脚本(&R)", self)
         refresh_action.setShortcut("F5")
         refresh_action.triggered.connect(self._on_refresh_scripts)
         file_menu.addAction(refresh_action)
-        
+
         file_menu.addSeparator()
-        
+
         exit_action = QAction("退出(&X)", self)
         exit_action.setShortcut("Ctrl+Q")
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
-        
-        # 执行菜单
-        exec_menu = menubar.addMenu("执行(&E)")
-        
-        start_action = QAction("开始执行(&S)", self)
-        start_action.setShortcut("F9")
-        start_action.triggered.connect(self._on_start_execution)
-        exec_menu.addAction(start_action)
-        
-        stop_action = QAction("停止执行(&T)", self)
-        stop_action.setShortcut("Shift+F9")
-        stop_action.triggered.connect(self._on_stop_execution)
-        exec_menu.addAction(stop_action)
-        
-        exec_menu.addSeparator()
-        
-        # 新增：暂停执行
-        pause_action = QAction("暂停执行(&P)", self)
-        pause_action.setShortcut("F10")
-        pause_action.triggered.connect(self._on_pause_execution)
-        exec_menu.addAction(pause_action)
-        
-        # 新增：继续执行
-        resume_action = QAction("继续执行(&C)", self)
-        resume_action.setShortcut("F11")
-        resume_action.triggered.connect(self._on_resume_execution)
-        exec_menu.addAction(resume_action)
-        
-        exec_menu.addSeparator()
-        
-        # 新增：重新执行失败的脚本
-        retry_failed_action = QAction("重试失败脚本(&R)", self)
-        retry_failed_action.triggered.connect(self._on_retry_failed)
-        exec_menu.addAction(retry_failed_action)
-        
-        # 新增：跳过当前脚本
-        skip_current_action = QAction("跳过当前脚本(&K)", self)
-        skip_current_action.setShortcut("Ctrl+K")
-        skip_current_action.triggered.connect(self._on_skip_current)
-        exec_menu.addAction(skip_current_action)
-        
-        # 视图菜单
-        view_menu = menubar.addMenu("视图(&V)")
 
-        backup_action = QAction("数据备份(&B)", self)
-        backup_action.triggered.connect(lambda: self.tab_widget.setCurrentIndex(3))
-        view_menu.addAction(backup_action)
+        # 方案菜单
+        suite_menu = menubar.addMenu("方案(&P)")
 
-        report_action = QAction("报告(&R)", self)
-        report_action.triggered.connect(lambda: self.tab_widget.setCurrentIndex(4))
-        view_menu.addAction(report_action)
+        save_suite_action = QAction("保存方案(&S)", self)
+        save_suite_action.triggered.connect(self.script_browser._on_save_suite)
+        suite_menu.addAction(save_suite_action)
 
-        user_action = QAction("用户管理(&U)", self)
-        user_action.triggered.connect(lambda: self.tab_widget.setCurrentIndex(5))
-        view_menu.addAction(user_action)
-        
+        manage_suite_action = QAction("管理方案(&M)", self)
+        manage_suite_action.triggered.connect(self.script_browser._on_manage_suites)
+        suite_menu.addAction(manage_suite_action)
+
         # 工具菜单
         tools_menu = menubar.addMenu("工具(&T)")
-        
+
         settings_action = QAction("设置(&S)", self)
         settings_action.triggered.connect(self._on_settings)
         tools_menu.addAction(settings_action)
-        
+
+        # 插件菜单
+        self.plugin_menu = menubar.addMenu("插件(&L)")
+        self._refresh_plugin_menu()
+
         # 帮助菜单
         help_menu = menubar.addMenu("帮助(&H)")
-        
+
         check_update_action = QAction("检查更新(&U)", self)
         check_update_action.setShortcut("F12")
         check_update_action.triggered.connect(self._on_check_update)
         help_menu.addAction(check_update_action)
-        
+
         help_menu.addSeparator()
-        
+
         about_action = QAction("关于(&A)", self)
         about_action.triggered.connect(self._on_about)
         help_menu.addAction(about_action)
@@ -268,7 +240,43 @@ class MainWindow(QMainWindow):
         self.pause_action.setEnabled(False)
         self.resume_action.setEnabled(False)
         self.skip_action.setEnabled(False)
-    
+
+    def _refresh_plugin_menu(self):
+        """刷新插件菜单"""
+        self.plugin_menu.clear()
+        config_manager = self.container.resolve('config_manager')
+        plugins = config_manager.get('plugins.items', [])
+
+        if not plugins:
+            empty_action = QAction("（无）", self)
+            empty_action.setEnabled(False)
+            self.plugin_menu.addAction(empty_action)
+            return
+
+        for plugin in plugins:
+            name = plugin.get('name', '未知')
+            path = plugin.get('path', '')
+            if name and path:
+                action = QAction(name, self)
+                action.setToolTip(path)
+                action.triggered.connect(lambda checked, p=path: self._on_launch_plugin(p))
+                self.plugin_menu.addAction(action)
+
+    def _on_launch_plugin(self, path):
+        """启动外部插件"""
+        import subprocess
+        import os
+        try:
+            if os.path.exists(path):
+                subprocess.Popen([path], shell=False)
+                self.logger.info(f"Launched plugin: {path}")
+                self.status_bar.showMessage(f"已启动: {os.path.basename(path)}", 3000)
+            else:
+                QMessageBox.warning(self, "警告", f"插件路径不存在:\n{path}")
+        except Exception as e:
+            self.logger.error(f"Failed to launch plugin {path}: {e}")
+            QMessageBox.critical(self, "错误", f"启动插件失败: {e}")
+
     def _create_status_bar(self):
         """创建状态栏"""
         self.status_bar = QStatusBar()
@@ -482,8 +490,15 @@ class MainWindow(QMainWindow):
             config_manager = self.container.resolve('config_manager')
             dialog = SettingsDialog(self, config_manager)
             if dialog.exec_():
-                self.logger.info("Settings saved")
+                # 将新的超时设置动态应用到执行引擎
+                engine = self.container.resolve('execution_engine')
+                if engine:
+                    engine.set_timeout(config_manager.get('execution.script_timeout', 3600))
+                    engine.set_result_idle_timeout(config_manager.get('execution.result_idle_timeout', 5))
+                self.logger.info("Settings saved and applied to engine")
                 self.status_bar.showMessage("设置已保存", 3000)
+                # 刷新插件菜单
+                self._refresh_plugin_menu()
         except Exception as e:
             self.logger.error(f"Error opening settings: {e}")
             QMessageBox.critical(self, "错误", f"打开设置时出错: {e}")
@@ -516,6 +531,20 @@ class MainWindow(QMainWindow):
         </ul>
         """
         QMessageBox.about(self, "关于", about_text)
+
+    def _on_menu_add_script(self):
+        """菜单栏 - 添加脚本文件"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "选择Python脚本文件", "", "Python Files (*.py);;All Files (*)"
+        )
+        if file_path:
+            self.script_browser._add_custom_script(file_path)
+
+    def _on_menu_add_directory(self):
+        """菜单栏 - 添加目录"""
+        folder_path = QFileDialog.getExistingDirectory(self, "选择脚本文件夹", "")
+        if folder_path:
+            self.script_browser._add_custom_folder_with_selection(folder_path)
     
     def _on_export_report(self):
         """导出报告"""

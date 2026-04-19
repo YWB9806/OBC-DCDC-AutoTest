@@ -67,54 +67,26 @@ class ScriptBrowser(QWidget):
         
         layout.addLayout(search_layout)
         
-        # 方案选择器
+        # 方案操作栏（一行显示：测试方案 + 选择方案 + 一键折叠 + 一键展开）
         suite_layout = QHBoxLayout()
         suite_layout.addWidget(QLabel("测试方案:"))
-        
+
         self.suite_combo = QComboBox()
         self.suite_combo.addItem("-- 未选择方案 --")
         self.suite_combo.currentIndexChanged.connect(self._on_suite_changed)
         suite_layout.addWidget(self.suite_combo)
-        
-        self.manage_suite_btn = QPushButton("管理方案")
-        self.manage_suite_btn.clicked.connect(self._on_manage_suites)
-        suite_layout.addWidget(self.manage_suite_btn)
-        
-        layout.addLayout(suite_layout)
-        
-        # 过滤器和树形控件选项
-        filter_layout = QHBoxLayout()
-        
-        filter_layout.addWidget(QLabel("分类:"))
-        
-        self.category_combo = QComboBox()
-        self.category_combo.addItem("全部")
-        self.category_combo.currentTextChanged.connect(self._on_filter_changed)
-        filter_layout.addWidget(self.category_combo)
-        
-        filter_layout.addStretch()
-        
-        # 添加自定义路径按钮（移到这里，放在列设置按钮左边）
-        self.add_path_btn = QPushButton("添加路径")
-        self.add_path_btn.setToolTip("添加自定义脚本文件或文件夹")
-        self.add_path_btn.clicked.connect(self._on_add_custom_path)
-        filter_layout.addWidget(self.add_path_btn)
-        
-        # 添加列显示设置按钮
-        self.column_settings_btn = QPushButton("列设置")
-        self.column_settings_btn.clicked.connect(self._show_column_settings)
-        filter_layout.addWidget(self.column_settings_btn)
-        
-        # 添加一键折叠/展开按钮
+
+        suite_layout.addStretch()
+
         self.collapse_all_btn = QPushButton("一键折叠")
         self.collapse_all_btn.clicked.connect(self._on_collapse_all)
-        filter_layout.addWidget(self.collapse_all_btn)
-        
+        suite_layout.addWidget(self.collapse_all_btn)
+
         self.expand_all_btn = QPushButton("一键展开")
         self.expand_all_btn.clicked.connect(self._on_expand_all)
-        filter_layout.addWidget(self.expand_all_btn)
-        
-        layout.addLayout(filter_layout)
+        suite_layout.addWidget(self.expand_all_btn)
+
+        layout.addLayout(suite_layout)
         
         # 脚本树
         self.tree_widget = QTreeWidget()
@@ -125,8 +97,8 @@ class ScriptBrowser(QWidget):
         self.tree_widget.itemChanged.connect(self._on_item_checked)
         self.tree_widget.itemDoubleClicked.connect(self._on_item_double_clicked)
         layout.addWidget(self.tree_widget)
-        
-        # 列显示状态（默认只显示脚本名称）
+
+        # 列显示状态（默认隐藏路径和状态列）
         self._column_visibility = {
             0: True,   # 脚本名称 - 始终显示
             1: False,  # 路径 - 默认隐藏
@@ -175,11 +147,7 @@ class ScriptBrowser(QWidget):
         """)
         self.add_to_queue_btn.clicked.connect(self._on_add_to_queue)
         button_layout.addWidget(self.add_to_queue_btn)
-        
-        self.save_suite_btn = QPushButton("保存为方案")
-        self.save_suite_btn.clicked.connect(self._on_save_suite)
-        button_layout.addWidget(self.save_suite_btn)
-        
+
         layout.addLayout(button_layout)
         
         # 自定义路径列表
@@ -211,13 +179,7 @@ class ScriptBrowser(QWidget):
             
             self._scripts = all_scripts
             self._filtered_scripts = self._scripts.copy()
-            
-            # 更新分类下拉框
-            categories = self.script_service.get_categories()
-            self.category_combo.clear()
-            self.category_combo.addItem("全部")
-            self.category_combo.addItems(categories)
-            
+
             # 批量更新UI（禁用更新直到完成）
             self.tree_widget.setUpdatesEnabled(False)
             try:
@@ -566,27 +528,7 @@ class ScriptBrowser(QWidget):
             else:
                 self.tree_widget.hideColumn(col_index)
     
-    def _on_filter_changed(self):
-        """过滤器改变"""
-        category = self.category_combo.currentText()
-        
-        if category == "全部":
-            self._filtered_scripts = self._scripts.copy()
-        else:
-            self._filtered_scripts = self.script_service.get_scripts_by_category(category)
-        
-        # 应用搜索过滤
-        keyword = self.search_input.text().strip()
-        if keyword:
-            self._filtered_scripts = [
-                s for s in self._filtered_scripts
-                if keyword.lower() in s['name'].lower() or
-                   keyword.lower() in s['path'].lower()
-            ]
-        
-        self._update_tree()
-        self._update_stats()
-    
+
     def _on_item_checked(self, item, column):
         """复选框状态改变"""
         if column != 0:

@@ -87,55 +87,7 @@ class ReportPanel(QWidget):
 
         layout.addWidget(template_group)
 
-        # === 2. 匹配配置 + 列映射合并到一个 GroupBox ===
-        mapping_group = QGroupBox("匹配与列映射")
-        mapping_layout = QVBoxLayout(mapping_group)
-        mapping_layout.setContentsMargins(6, 6, 6, 6)
-        mapping_layout.setSpacing(4)
-
-        # 匹配配置行
-        match_row = QHBoxLayout()
-        match_row.addWidget(QLabel("匹配列:"))
-        self.match_column_combo = QComboBox()
-        self.match_column_combo.currentIndexChanged.connect(self._save_mapping_config)
-        match_row.addWidget(self.match_column_combo, 1)
-
-        match_row.addWidget(QLabel("匹配字段:"))
-        self.match_field_combo = QComboBox()
-        for field_key, field_label in MATCH_FIELDS:
-            self.match_field_combo.addItem(field_label, field_key)
-        self.match_field_combo.currentIndexChanged.connect(self._save_mapping_config)
-        match_row.addWidget(self.match_field_combo, 1)
-
-        save_map_btn = QPushButton("保存映射")
-        save_map_btn.clicked.connect(self._save_mapping_config)
-        match_row.addWidget(save_map_btn)
-        mapping_layout.addLayout(match_row)
-
-        # 列映射表
-        self.mapping_table = QTableWidget()
-        self.mapping_table.setColumnCount(3)
-        self.mapping_table.setHorizontalHeaderLabels(["数据字段", "写入到 Excel 列", "启用"])
-        self.mapping_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.mapping_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        self.mapping_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        self.mapping_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.mapping_table.setMaximumHeight(120)
-        mapping_layout.addWidget(self.mapping_table)
-
-        map_btn_layout = QHBoxLayout()
-        add_map_btn = QPushButton("添加映射")
-        add_map_btn.clicked.connect(self._add_mapping_row)
-        map_btn_layout.addWidget(add_map_btn)
-        del_map_btn = QPushButton("删除选中")
-        del_map_btn.clicked.connect(self._delete_mapping_row)
-        map_btn_layout.addWidget(del_map_btn)
-        map_btn_layout.addStretch()
-        mapping_layout.addLayout(map_btn_layout)
-
-        layout.addWidget(mapping_group)
-
-        # === 3. 生成报告（紧凑布局） ===
+        # === 2. 生成报告（紧凑布局） ===
         gen_group = QGroupBox("生成报告")
         gen_layout = QVBoxLayout(gen_group)
         gen_layout.setContentsMargins(6, 6, 6, 6)
@@ -388,28 +340,9 @@ class ReportPanel(QWidget):
         }
 
     def _load_mapping_config(self):
-        """加载映射配置到 UI"""
-        config = self._load_config_dict()
-
-        # 更新匹配列下拉框
-        self.match_column_combo.blockSignals(True)
-        self.match_column_combo.clear()
-        for col in self._excel_columns:
-            self.match_column_combo.addItem(col)
-        match_col = config.get('match_column', '')
-        idx = self.match_column_combo.findText(match_col)
-        if idx >= 0:
-            self.match_column_combo.setCurrentIndex(idx)
-        self.match_column_combo.blockSignals(False)
-
-        # 更新匹配字段
-        match_field = config.get('match_field', 'script_name')
-        idx = self.match_field_combo.findData(match_field)
-        if idx >= 0:
-            self.match_field_combo.setCurrentIndex(idx)
-
-        # 更新映射表
-        self._populate_mapping_table(config.get('column_mappings', []))
+        """加载映射配置（配置映射通过对话框管理，此处仅缓存配置）"""
+        # 配置由 _on_config_mapping 对话框管理，无需更新已移除的UI控件
+        pass
 
     def _populate_mapping_table(self, mappings: list):
         """填充映射表"""
@@ -587,8 +520,9 @@ class ReportPanel(QWidget):
             records = self._get_report_data(batch_id)
             self._cached_records = records
 
-            # 建立匹配映射
-            match_field = self.match_field_combo.currentData()
+            # 建立匹配映射（从配置获取匹配字段，而非已移除的UI控件）
+            config = self._load_config_dict()
+            match_field = config.get('match_field', 'script_name')
             self._record_map = {}
             for r in records:
                 key = r.get(match_field, '')

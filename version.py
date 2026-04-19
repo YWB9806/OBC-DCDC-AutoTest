@@ -3,22 +3,22 @@
 用于管理应用程序版本信息和更新检查
 """
 
-__version__ = "1.2.0"
-__version_info__ = (1, 2, 0)
+__version__ = "1.3.0"
+__version_info__ = (1, 3, 0)
 
 # 版本信息
 VERSION = {
     "major": 1,
-    "minor": 2,
+    "minor": 3,
     "patch": 0,
     "build": 0,
-    "release_date": "2026-04-04",
+    "release_date": "2026-04-19",
     "release_type": "stable"  # stable, beta, alpha
 }
 
 # 应用信息
 APP_INFO = {
-    "name": "Python脚本批量执行工具",
+    "name": "富特科技-测试部-自动化测试软件",
     "name_en": "OBC-DCDC AutoTest",
     "description": "一个功能强大的Python脚本批量执行和管理工具",
     "author": "YWB9806",

@@ -6,7 +6,8 @@
     "max_workers": 1,
     "timeout": 3600,
     "mode": "sequential",
-    "script_timeout": 3600
+    "script_timeout": 3600,
+    "result_idle_timeout": 5
   },
   "scripts": {
     "root_path": "TestScripts"
@@ -22,5 +23,8 @@
   },
   "update": {
     "check_on_startup": false
+  },
+  "plugins": {
+    "items": []
   }
 }

@@ -77,6 +77,11 @@ class ResultViewer(QWidget):
         # 移除自动触发
         # self.status_combo.currentTextChanged.connect(self._on_filter_changed)
         row1_layout.addWidget(self.status_combo)
+
+        row1_layout.addWidget(QLabel("测试结果:"))
+        self.test_result_combo = QComboBox()
+        self.test_result_combo.addItems(["全部", "合格", "不合格", "待判定", "执行错误", "超时"])
+        row1_layout.addWidget(self.test_result_combo)
         
         row1_layout.addStretch()
         filter_layout.addLayout(row1_layout)
@@ -220,6 +225,18 @@ class ResultViewer(QWidget):
                 "超时": "TIMEOUT"
             }
             status = status_map.get(status_filter)
+
+            # 获取测试结果过滤
+            test_result_filter = self.test_result_combo.currentText()
+            test_result_map = {
+                "全部": None,
+                "合格": ["pass", "合格"],
+                "不合格": ["fail", "不合格"],
+                "待判定": ["pending", "待判定"],
+                "执行错误": ["error", "错误", "执行错误"],
+                "超时": ["timeout", "超时"]
+            }
+            test_result_values = test_result_map.get(test_result_filter)
             
             # 获取方案过滤
             suite_id = None
@@ -288,7 +305,14 @@ class ResultViewer(QWidget):
                         except Exception:
                             pass
                 results = filtered_results
-            
+
+            # 应用测试结果过滤（合格/不合格/待判定等）
+            if test_result_values:
+                results = [
+                    r for r in results
+                    if r.get('test_result', '-') in test_result_values
+                ]
+
             # 保存所有结果用于导出
             self._all_results = results
             

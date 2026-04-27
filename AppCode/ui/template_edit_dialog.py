@@ -91,22 +91,17 @@ class TemplateEditDialog(QDialog):
         bottom_layout = QVBoxLayout(bottom_widget)
         bottom_layout.setContentsMargins(0, 0, 0, 0)
 
-        # 匹配配置
+        # 匹配配置（所有控件放置在一行）
         match_group = QGroupBox("匹配配置")
         match_layout = QVBoxLayout(match_group)
 
-        # 第一行：sheet 选择
-        sheet_row = QHBoxLayout()
-        sheet_row.addWidget(QLabel("映射工作表:"))
+        match_row = QHBoxLayout()
+        match_row.addWidget(QLabel("映射工作表:"))
         self.sheet_combo = QComboBox()
         for name in self.sheet_names:
             self.sheet_combo.addItem(name)
-        sheet_row.addWidget(self.sheet_combo, 1)
-        sheet_row.addStretch()
-        match_layout.addLayout(sheet_row)
+        match_row.addWidget(self.sheet_combo, 1)
 
-        # 第二行：匹配列和字段
-        match_row = QHBoxLayout()
         match_row.addWidget(QLabel("匹配列:"))
         self.match_column_combo = QComboBox()
         for col in self.excel_columns:

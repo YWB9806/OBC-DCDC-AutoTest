@@ -490,7 +490,7 @@ class MainWindow(QMainWindow):
         """显示关于对话框"""
         from version import get_version_string
         about_text = f"""
-        <h2>富特科技-测试部-自动化测试软件</h2>
+        <h2 style='white-space: nowrap;'>富特科技-测试部-自动化测试软件</h2>
         <p>版本: {get_version_string()}</p>
         <p>开发者: Yangwenbo</p>
         <p>联系方式: ywb9806@163.com</p>

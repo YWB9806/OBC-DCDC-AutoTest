@@ -87,8 +87,8 @@ class LoginDialog(QDialog):
         container_layout.setContentsMargins(30, 25, 30, 25)
         container_layout.setSpacing(10)
 
-        # 标题（单行显示完整名称）
-        title_label = QLabel("富特科技-测试部-自动化测试软件")
+        # 标题（两行显示）
+        title_label = QLabel("自动化测试软件")
         title_label.setFocusPolicy(Qt.NoFocus)
         title_font = QFont()
         title_font.setPointSize(12)
@@ -96,8 +96,16 @@ class LoginDialog(QDialog):
         title_label.setFont(title_font)
         title_label.setAlignment(Qt.AlignCenter)
         title_label.setStyleSheet("color: #2c3e50; padding: 2px;")
-        title_label.setWordWrap(False)
         container_layout.addWidget(title_label)
+
+        subtitle_label = QLabel("富特科技-测试部")
+        subtitle_label.setFocusPolicy(Qt.NoFocus)
+        subtitle_font = QFont()
+        subtitle_font.setPointSize(9)
+        subtitle_label.setFont(subtitle_font)
+        subtitle_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        subtitle_label.setStyleSheet("color: #7f8c8d; padding-right: 5px;")
+        container_layout.addWidget(subtitle_label)
 
         container_layout.addSpacing(8)
 

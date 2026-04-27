@@ -21,15 +21,11 @@ class ExecutionPanel(QWidget):
     # 信号定义
     execution_started = pyqtSignal(str)  # 执行开始
     execution_finished = pyqtSignal(str, bool)  # 执行完成(execution_id, success)
-    execution_paused = pyqtSignal(str)  # 执行暂停
-    execution_resumed = pyqtSignal(str)  # 执行恢复
 
-    # 新增：控制按钮信号
+    # 控制按钮信号
     refresh_requested = pyqtSignal()  # 请求刷新
     start_requested = pyqtSignal()  # 请求开始执行
     stop_requested = pyqtSignal()  # 请求停止执行
-    pause_requested = pyqtSignal()  # 请求暂停执行
-    resume_requested = pyqtSignal()  # 请求继续执行
     
     def __init__(self, container, parent=None):
         """初始化执行控制面板
@@ -50,9 +46,6 @@ class ExecutionPanel(QWidget):
         self._displayed_lines = {}  # 记录每个执行ID已显示的行数
         self._start_time = None  # 记录开始时间
         self._is_stopping = False  # 标记是否正在停止
-        self._is_paused = False  # 标记是否暂停
-        self._is_pausing = False  # 标记是否正在暂停
-        self._is_resuming = False  # 标记是否正在恢复
         self.current_suite = None  # 当前测试方案
         
         self._init_ui()
@@ -60,8 +53,7 @@ class ExecutionPanel(QWidget):
         # 创建定时器用于更新执行状态
         self._update_timer = QTimer()
         self._update_timer.timeout.connect(self._update_execution_status)
-        self._update_timer.setInterval(1000)  # 优化：改为1秒更新一次，减少负载
-        self._paused_update_interval = 3000  # 暂停状态3秒更新一次，进一步减少负载
+        self._update_timer.setInterval(1000)  # 1秒更新一次
         self._last_update_time = {}  # 记录每个脚本的最后更新时间，避免频繁更新
         
         # 创建定时器用于更新时间显示
@@ -101,21 +93,6 @@ class ExecutionPanel(QWidget):
         self.stop_btn.clicked.connect(self._on_stop_clicked)
         control_layout.addWidget(self.stop_btn)
 
-        # 暂停按钮
-        self.pause_btn = QPushButton("暂停")
-        self.pause_btn.setToolTip("暂停执行 (F10)")
-        self.pause_btn.setStyleSheet("background-color: #FF9800; color: white; font-weight: bold;")
-        self.pause_btn.setEnabled(False)
-        self.pause_btn.clicked.connect(self._on_pause_clicked)
-        control_layout.addWidget(self.pause_btn)
-
-        # 继续按钮
-        self.resume_btn = QPushButton("▶ 继续")
-        self.resume_btn.setToolTip("继续执行 (F11)")
-        self.resume_btn.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold;")
-        self.resume_btn.setEnabled(False)
-        self.resume_btn.clicked.connect(self._on_resume_clicked)
-        control_layout.addWidget(self.resume_btn)
 
         control_layout.addWidget(QLabel("|"))  # 分隔符
 
@@ -432,196 +409,19 @@ class ExecutionPanel(QWidget):
             # 使用lambda传递参数
             QTimer.singleShot(0, lambda: self._on_cancel_failed(str(e)))
     
-    def pause_execution(self):
-        """暂停执行（异步版本 - 避免UI卡顿）"""
-        if not self._is_executing or self._is_stopping or self._is_pausing:
-            self.logger.warning("Cannot pause: not executing, stopping, or already pausing")
-            return
-        
-        try:
-            self._is_pausing = True
-            
-            exec_id = self._current_execution_id or self._current_batch_id
-            if exec_id:
-                self._append_output("正在暂停执行...", QColor(255, 165, 0))
-                self.logger.info(f"Pausing execution: {exec_id}")
-                
-                # 禁用暂停按钮，防止重复点击
-                if hasattr(self, 'parent') and callable(self.parent):
-                    parent = self.parent()
-                    if parent and hasattr(parent, 'pause_action'):
-                        parent.pause_action.setEnabled(False)
-                
-                # 使用异步方式执行暂停
-                pause_thread = threading.Thread(
-                    target=self._do_pause_execution_async,
-                    args=(exec_id,),
-                    daemon=True,
-                    name="PauseExecutionThread"
-                )
-                pause_thread.start()
-                
-                # 不等待线程完成，立即返回
-        
-        except Exception as e:
-            self.logger.error(f"Error pausing execution: {e}", exc_info=True)
-            self._append_output(f"暂停执行时出错: {e}", QColor(255, 0, 0))
-            self._is_pausing = False
-            self._enable_pause_button()
-    
-    def _do_pause_execution_async(self, exec_id: str):
-        """异步执行暂停操作（在独立线程中运行）"""
-        try:
-            self.logger.info(f"Pause thread started for: {exec_id}")
-            
-            # 调用暂停服务
-            result = self.execution_service.pause_execution(exec_id)
-            
-            # 使用PyQt5信号槽机制更新UI（线程安全）
-            if result['success']:
-                # 使用QTimer在主线程中执行
-                QTimer.singleShot(0, self._on_pause_success)
-            else:
-                error_msg = result.get('error', 'Unknown error')
-                # 使用lambda传递参数
-                QTimer.singleShot(0, lambda: self._on_pause_failed(error_msg))
-        
-        except Exception as e:
-            self.logger.error(f"Error in pause execution: {e}", exc_info=True)
-            # 使用lambda传递参数
-            QTimer.singleShot(0, lambda: self._on_pause_failed(str(e)))
-    
-    def resume_execution(self):
-        """恢复执行（异步版本 - 避免UI卡顿）"""
-        # 修复：只检查是否暂停和是否正在恢复
-        if not self._is_paused or self._is_resuming:
-            self.logger.warning(f"Cannot resume: _is_paused={self._is_paused}, _is_resuming={self._is_resuming}")
-            return
-        
-        try:
-            self._is_resuming = True
-            
-            exec_id = self._current_execution_id or self._current_batch_id
-            if exec_id:
-                self._append_output("正在恢复执行...", QColor(255, 165, 0))
-                self.logger.info(f"Resuming execution: {exec_id}")
-                
-                # 禁用恢复按钮，防止重复点击
-                if hasattr(self, 'parent') and callable(self.parent):
-                    parent = self.parent()
-                    if parent and hasattr(parent, 'resume_action'):
-                        parent.resume_action.setEnabled(False)
-                
-                # 使用异步方式执行恢复
-                resume_thread = threading.Thread(
-                    target=self._do_resume_execution_async,
-                    args=(exec_id,),
-                    daemon=True,
-                    name="ResumeExecutionThread"
-                )
-                resume_thread.start()
-                
-                # 不等待线程完成，立即返回
-        
-        except Exception as e:
-            self.logger.error(f"Error resuming execution: {e}", exc_info=True)
-            self._append_output(f"恢复执行时出错: {e}", QColor(255, 0, 0))
-            self._is_resuming = False
-            self._enable_resume_button()
-    
-    def _do_resume_execution_async(self, exec_id: str):
-        """异步执行恢复操作（在独立线程中运行）"""
-        try:
-            self.logger.info(f"Resume thread started for: {exec_id}")
-            
-            # 调用恢复服务
-            result = self.execution_service.resume_execution(exec_id)
-            
-            # 使用PyQt5信号槽机制更新UI（线程安全）
-            if result['success']:
-                # 使用QTimer在主线程中执行
-                QTimer.singleShot(0, self._on_resume_success)
-            else:
-                error_msg = result.get('error', 'Unknown error')
-                # 使用lambda传递参数
-                QTimer.singleShot(0, lambda: self._on_resume_failed(error_msg))
-        
-        except Exception as e:
-            self.logger.error(f"Error in resume execution: {e}", exc_info=True)
-            # 使用lambda传递参数
-            QTimer.singleShot(0, lambda: self._on_resume_failed(str(e)))
-    
     def _on_cancel_success(self):
         """取消成功回调（在UI线程中执行）"""
         self._append_output("执行已停止", QColor(0, 128, 0))
         self.logger.info("Execution stopped successfully")
         self._enable_stop_button()
-    
+
     def _on_cancel_failed(self, error_msg: str):
         """取消失败回调（在UI线程中执行）"""
         self._append_output(f"停止执行失败: {error_msg}", QColor(255, 0, 0))
         self.logger.warning(f"Failed to stop execution: {error_msg}")
         self._is_stopping = False
         self._enable_stop_button()
-    
-    def _on_pause_success(self):
-        """暂停成功回调（在UI线程中执行）"""
-        self._append_output("执行已暂停", QColor(0, 128, 0))
-        self.status_label.setText("已暂停")
-        self.status_label_main.setText("已暂停")
-        self.status_label_main.setStyleSheet("font-weight: bold; color: orange;")
-        
-        # 标记为暂停状态
-        self._is_paused = True
-        self._is_pausing = False
-        self.logger.info("Execution paused successfully")
-        
-        # 减慢更新频率以减少负载
-        self._update_timer.setInterval(self._paused_update_interval)
-        self.logger.info(f"Update interval changed to {self._paused_update_interval}ms (paused state)")
-        
-        # 发出暂停信号，让主窗口更新按钮状态
-        exec_id = self._current_execution_id or self._current_batch_id
-        if exec_id:
-            self.execution_paused.emit(exec_id)
-            self.logger.info(f"Emitted execution_paused signal for {exec_id}")
-    
-    def _on_pause_failed(self, error_msg: str):
-        """暂停失败回调（在UI线程中执行）"""
-        self._append_output(f"暂停失败: {error_msg}", QColor(255, 0, 0))
-        self.logger.warning(f"Failed to pause execution: {error_msg}")
-        self._is_pausing = False
-        self._enable_pause_button()
-    
-    def _on_resume_success(self):
-        """恢复成功回调（在UI线程中执行）"""
-        self._append_output("执行已恢复", QColor(0, 128, 0))
-        self.status_label.setText("执行中...")
-        self.status_label_main.setText("执行中...")
-        self.status_label_main.setStyleSheet("font-weight: bold; color: blue;")
-        
-        # 清除暂停状态
-        self._is_paused = False
-        self._is_resuming = False
-        self.logger.info("Execution resumed successfully")
-        
-        # 恢复正常更新频率
-        self._update_timer.setInterval(1000)
-        self.logger.info("Update interval restored to 1000ms (running state)")
-        
-        # 发出恢复信号，让主窗口更新按钮状态
-        exec_id = self._current_execution_id or self._current_batch_id
-        if exec_id:
-            self.execution_resumed.emit(exec_id)
-            self.logger.info(f"Emitted execution_resumed signal for {exec_id}")
-    
-    def _on_resume_failed(self, error_msg: str):
-        """恢复失败回调（在UI线程中执行）"""
-        self._append_output(f"恢复失败: {error_msg}", QColor(255, 0, 0))
-        self.logger.warning(f"Failed to resume execution: {error_msg}")
-        self._is_resuming = False
-        self._enable_resume_button()
-    
+
     def _enable_stop_button(self):
         """重新启用停止按钮"""
         if hasattr(self, 'parent') and callable(self.parent):
@@ -629,24 +429,10 @@ class ExecutionPanel(QWidget):
             if parent and hasattr(parent, 'stop_action'):
                 parent.stop_action.setEnabled(True)
     
-    def _enable_pause_button(self):
-        """重新启用暂停按钮"""
-        if hasattr(self, 'parent') and callable(self.parent):
-            parent = self.parent()
-            if parent and hasattr(parent, 'pause_action'):
-                parent.pause_action.setEnabled(True)
-    
-    def _enable_resume_button(self):
-        """重新启用恢复按钮"""
-        if hasattr(self, 'parent') and callable(self.parent):
-            parent = self.parent()
-            if parent and hasattr(parent, 'resume_action'):
-                parent.resume_action.setEnabled(True)
-    
     def _update_execution_status(self):
         """更新执行状态（优化版 - 增量更新）"""
-        # 如果不在执行中，或者正在暂停/恢复/停止，跳过更新
-        if not self._is_executing or self._is_pausing or self._is_resuming or self._is_stopping:
+        # 如果不在执行中，或者正在停止，跳过更新
+        if not self._is_executing or self._is_stopping:
             return
 
         try:
@@ -1136,16 +922,6 @@ class ExecutionPanel(QWidget):
         self.stop_requested.emit()
         self.logger.info("Stop execution requested from execution panel")
 
-    def _on_pause_clicked(self):
-        """暂停按钮点击"""
-        self.pause_requested.emit()
-        self.logger.info("Pause execution requested from execution panel")
-
-    def _on_resume_clicked(self):
-        """继续按钮点击"""
-        self.resume_requested.emit()
-        self.logger.info("Resume execution requested from execution panel")
-
     def _on_skip_clicked(self):
         """跳过当前脚本按钮点击"""
         if not self._is_executing:
@@ -1173,17 +949,14 @@ class ExecutionPanel(QWidget):
             self.logger.error(f"Error skipping script: {e}", exc_info=True)
             self._append_output(f"跳过脚本时出错: {e}", QColor(255, 0, 0))
 
-    def set_button_states(self, is_executing: bool, is_paused: bool = False):
+    def set_button_states(self, is_executing: bool):
         """设置按钮状态
 
         Args:
             is_executing: 是否正在执行
-            is_paused: 是否已暂停
         """
         self.start_btn.setEnabled(not is_executing)
-        self.stop_btn.setEnabled(is_executing and not is_paused)
-        self.pause_btn.setEnabled(is_executing and not is_paused)
-        self.resume_btn.setEnabled(is_paused)
+        self.stop_btn.setEnabled(is_executing)
 
     def set_suite_name(self, suite_name: str):
         """设置当前方案名称

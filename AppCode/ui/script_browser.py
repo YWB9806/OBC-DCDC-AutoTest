@@ -155,9 +155,16 @@ class ScriptBrowser(QWidget):
             # 不再自动加载TestScripts目录
             # 用户需要手动添加路径
             self._root_path = None
-            
+
+            # 从配置加载默认目录（首次启动或新增目录时自动加载）
+            default_dirs = self.config_manager.get('scripts.default_directories', [])
+            for dir_path in default_dirs:
+                if dir_path and os.path.isdir(dir_path) and dir_path not in self._custom_paths:
+                    self._custom_paths.append(dir_path)
+                    self.logger.info(f"Loaded default directory from config: {dir_path}")
+
             all_scripts = []
-            
+
             # 只加载自定义路径的脚本
             for custom_path in self._custom_paths:
                 if os.path.isfile(custom_path):
@@ -652,6 +659,16 @@ class ScriptBrowser(QWidget):
         root = self.tree_widget.invisibleRootItem()
         set_recursive(root)
     
+    def _save_default_directories_to_config(self):
+        """将当前自定义目录保存到配置文件"""
+        try:
+            dir_paths = [p for p in self._custom_paths if os.path.isdir(p)]
+            self.config_manager.set('scripts.default_directories', dir_paths)
+            self.config_manager.save()
+            self.logger.info(f"Saved {len(dir_paths)} directories to config")
+        except Exception as e:
+            self.logger.error(f"Failed to save directories to config: {e}")
+
     def refresh(self):
         """刷新脚本列表"""
         self._load_scripts()
@@ -702,8 +719,8 @@ class ScriptBrowser(QWidget):
             self.suite_combo.currentIndexChanged.connect(self._on_suite_changed)
     
     def _on_suite_changed(self, index, show_message=True):
-        """方案选择改变
-        
+        """方案选择改变（异步加载版本 - 避免UI卡顿）
+
         Args:
             index: 下拉框索引
             show_message: 是否显示提示消息
@@ -711,63 +728,171 @@ class ScriptBrowser(QWidget):
         if index <= 0:
             self._current_suite = None
             return
-        
+
         suite_id = self.suite_combo.currentData()
         if not suite_id:
             return
-        
+
         try:
-            # 加载方案
+            # 加载方案基本信息（快速操作）
             suite = self.suite_service.get_suite(suite_id)
             if not suite:
                 QMessageBox.warning(self, "警告", "方案不存在")
                 return
-            
+
             self._current_suite = suite
-            
+
             # 获取方案中的脚本路径
             script_paths = suite.get('script_paths', [])
             if isinstance(script_paths, str):
                 import json
                 script_paths = json.loads(script_paths)
-            
-            # 【Bug修复】检查并自动加载缺失的脚本路径
+
             # 规范化路径以进行比较（统一使用小写和正斜杠）
             def normalize_path(p):
-                """规范化路径用于比较"""
                 return os.path.normpath(p).lower().replace('\\', '/')
-            
+
             missing_scripts = []
             loaded_paths = {normalize_path(s['path']) for s in self._scripts}
-            
+
             for path in script_paths:
                 normalized_path = normalize_path(path)
                 if normalized_path not in loaded_paths and os.path.exists(path):
                     missing_scripts.append(path)
-            
+
             if missing_scripts:
-                self.logger.info(f"Found {len(missing_scripts)} missing scripts, auto-loading their directories...")
-                self._auto_load_missing_scripts(missing_scripts)
-            
-            # 取消所有选择
-            self._set_all_check_state(Qt.Unchecked)
-            
-            # 选中方案中的脚本
-            self._select_scripts_by_paths(script_paths)
-            
-            self.logger.info(f"Loaded suite: {suite['name']} with {len(script_paths)} scripts")
-            
-            # 只在需要时显示提示消息
-            if show_message:
-                QMessageBox.information(
-                    self, "成功",
-                    f"已加载方案 '{suite['name']}'\n包含 {len(script_paths)} 个脚本"
-                )
-        
+                self.logger.info(f"Found {len(missing_scripts)} missing scripts, auto-loading in background...")
+                # 异步加载缺失的脚本目录（避免UI卡顿）
+                self._auto_load_missing_scripts_async(missing_scripts, script_paths, suite, show_message)
+            else:
+                # 没有缺失脚本，直接在UI线程完成选择和提示
+                self._set_all_check_state(Qt.Unchecked)
+                self._select_scripts_by_paths(script_paths)
+                self.logger.info(f"Loaded suite: {suite['name']} with {len(script_paths)} scripts")
+                if show_message:
+                    QMessageBox.information(
+                        self, "成功",
+                        f"已加载方案 '{suite['name']}'\n包含 {len(script_paths)} 个脚本"
+                    )
+
         except Exception as e:
             self.logger.error(f"Error loading suite: {e}")
             QMessageBox.critical(self, "错误", f"加载方案失败: {e}")
     
+    def _auto_load_missing_scripts_async(self, script_paths, suite_script_paths, suite, show_message):
+        """异步自动加载缺失的脚本目录（在后台线程中扫描，避免UI卡顿）
+
+        Args:
+            script_paths: 缺失的脚本路径列表
+            suite_script_paths: 方案中的脚本路径列表
+            suite: 方案信息字典
+            show_message: 是否显示提示消息
+        """
+        from PyQt5.QtCore import QThread, pyqtSignal
+
+        class ScanDirsThread(QThread):
+            finished = pyqtSignal(list, int)  # dirs_to_scan, total_added
+            error = pyqtSignal(str)
+
+            def __init__(self, browser, missing_paths):
+                super().__init__()
+                self.browser = browser
+                self.missing_paths = missing_paths
+
+            def run(self):
+                try:
+                    dirs_to_scan = set()
+                    for path in self.missing_paths:
+                        if not os.path.isfile(path):
+                            continue
+                        parent_dir = os.path.dirname(path)
+                        if not parent_dir or len(parent_dir) <= 3:
+                            continue
+                        current_dir = parent_dir
+                        project_root = parent_dir
+                        max_levels = 3
+                        level = 0
+                        while level < max_levels and current_dir:
+                            parent = os.path.dirname(current_dir)
+                            if not parent or parent == current_dir or len(parent) <= 3:
+                                break
+                            if parent in self.browser._custom_paths:
+                                project_root = parent
+                                break
+                            if any(os.path.exists(os.path.join(parent, marker))
+                                   for marker in ['.git', '.vscode', 'requirements.txt', 'setup.py']):
+                                project_root = parent
+                                break
+                            current_dir = parent
+                            level += 1
+                        if project_root and len(project_root) > 3 and project_root not in self.browser._custom_paths:
+                            dirs_to_scan.add(project_root)
+
+                    if not dirs_to_scan:
+                        self.finished.emit([], 0)
+                        return
+
+                    total_added = 0
+                    scanned_dirs = []
+                    for dir_path in dirs_to_scan:
+                        if dir_path not in self.browser._custom_paths:
+                            self.browser._custom_paths.append(dir_path)
+                            # 保存到配置，下次启动自动加载
+                            self.browser._save_default_directories_to_config()
+                            try:
+                                result = self.browser.script_service.scan_and_load_scripts(dir_path)
+                                if result['success']:
+                                    existing_paths = {s['path'] for s in self.browser._scripts}
+                                    for script in result['scripts']:
+                                        if script['path'] not in existing_paths:
+                                            self.browser._scripts.append(script)
+                                            self.browser._filtered_scripts.append(script)
+                                            existing_paths.add(script['path'])
+                                            total_added += 1
+                            except Exception:
+                                pass
+                        scanned_dirs.append(dir_path)
+
+                    self.finished.emit(scanned_dirs, total_added)
+                except Exception as e:
+                    self.error.emit(str(e))
+
+        self._scan_dirs_thread = ScanDirsThread(self, script_paths)
+
+        def on_finished(dirs_to_scan, total_added):
+            try:
+                if total_added > 0:
+                    self.tree_widget.setUpdatesEnabled(False)
+                    try:
+                        self._update_tree()
+                        self._update_stats()
+                    finally:
+                        self.tree_widget.setUpdatesEnabled(True)
+
+                # 选中方案中的脚本
+                self._set_all_check_state(Qt.Unchecked)
+                self._select_scripts_by_paths(suite_script_paths)
+
+                self.logger.info(f"Loaded suite: {suite['name']} with {len(suite_script_paths)} scripts (async)")
+
+                if show_message:
+                    QMessageBox.information(
+                        self, "成功",
+                        f"已加载方案 '{suite['name']}'\n包含 {len(suite_script_paths)} 个脚本"
+                    )
+            except Exception as e:
+                self.logger.error(f"Error in async suite load finish: {e}")
+            finally:
+                self._scan_dirs_thread = None
+
+        def on_error(error_msg):
+            self.logger.error(f"Error scanning directories for suite: {error_msg}")
+            self._scan_dirs_thread = None
+
+        self._scan_dirs_thread.finished.connect(on_finished)
+        self._scan_dirs_thread.error.connect(on_error)
+        self._scan_dirs_thread.start()
+
     def _auto_load_missing_scripts(self, script_paths):
         """自动加载缺失的脚本（通过扫描其父目录）
         
@@ -1216,10 +1341,13 @@ class ScriptBrowser(QWidget):
                     
                     # 添加到自定义路径列表
                     self._custom_paths.append(folder_path)
-                    
+
+                    # 保存到配置文件，下次启动自动加载
+                    self._save_default_directories_to_config()
+
                     # 使用集合优化查找性能
                     existing_paths = {s['path'] for s in self._scripts}
-                    
+
                     # 批量添加选中的脚本到列表（避免逐个添加触发多次更新）
                     added_count = 0
                     for script in selected_scripts:
@@ -1228,7 +1356,7 @@ class ScriptBrowser(QWidget):
                             self._filtered_scripts.append(script)
                             existing_paths.add(script['path'])
                             added_count += 1
-                    
+
                     # 只在有新脚本添加时才更新UI
                     if added_count > 0:
                         # 使用优化的更新方法：禁用UI更新直到完成
@@ -1238,7 +1366,7 @@ class ScriptBrowser(QWidget):
                             self._update_stats()
                         finally:
                             self.tree_widget.setUpdatesEnabled(True)
-                    
+
                     self.logger.info(f"Added {added_count} scripts from folder: {folder_path}")
                     QMessageBox.information(
                         self, "成功",

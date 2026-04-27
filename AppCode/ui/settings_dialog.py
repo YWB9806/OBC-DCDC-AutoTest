@@ -1,6 +1,7 @@
 """
 设置对话框
 """
+import os
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QSpinBox, QCheckBox, QPushButton, QGroupBox,
                              QFormLayout, QMessageBox, QTabWidget, QWidget,
@@ -22,13 +23,17 @@ class SettingsDialog(QDialog):
     def init_ui(self):
         """初始化UI"""
         self.setWindowTitle("设置")
-        self.setMinimumWidth(500)
-        self.setMinimumHeight(400)
+        self.setMinimumWidth(550)
+        self.setMinimumHeight(420)
 
         layout = QVBoxLayout()
 
         # 创建选项卡
         tab_widget = QTabWidget()
+
+        # 脚本目录设置选项卡（放在最前面，最常用）
+        dirs_tab = self.create_directories_tab()
+        tab_widget.addTab(dirs_tab, "脚本目录")
 
         # 执行设置选项卡
         execution_tab = self.create_execution_tab()
@@ -63,6 +68,83 @@ class SettingsDialog(QDialog):
         layout.addLayout(button_layout)
 
         self.setLayout(layout)
+
+    def create_directories_tab(self):
+        """创建脚本目录设置选项卡"""
+        widget = QWidget()
+        layout = QVBoxLayout()
+
+        dirs_group = QGroupBox("默认脚本目录")
+        dirs_layout = QVBoxLayout(dirs_group)
+
+        info_label = QLabel(
+            "添加脚本文件夹作为默认目录，每次启动软件时自动加载这些目录中的脚本。"
+        )
+        info_label.setWordWrap(True)
+        info_label.setStyleSheet("color: #666; font-size: 10px; padding: 5px;")
+        dirs_layout.addWidget(info_label)
+
+        # 目录列表表格
+        self.dirs_table = QTableWidget()
+        self.dirs_table.setColumnCount(2)
+        self.dirs_table.setHorizontalHeaderLabels(["序号", "目录路径"])
+        self.dirs_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
+        self.dirs_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.dirs_table.setColumnWidth(0, 50)
+        self.dirs_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.dirs_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        dirs_layout.addWidget(self.dirs_table)
+
+        # 操作按钮
+        dirs_btn_layout = QHBoxLayout()
+        add_dir_btn = QPushButton("添加目录")
+        add_dir_btn.clicked.connect(self._add_dir_row)
+        dirs_btn_layout.addWidget(add_dir_btn)
+
+        browse_dir_btn = QPushButton("浏览...")
+        browse_dir_btn.clicked.connect(self._browse_directory)
+        dirs_btn_layout.addWidget(browse_dir_btn)
+
+        del_dir_btn = QPushButton("删除选中")
+        del_dir_btn.clicked.connect(self._delete_dir_row)
+        dirs_btn_layout.addWidget(del_dir_btn)
+
+        dirs_btn_layout.addStretch()
+        dirs_layout.addLayout(dirs_btn_layout)
+
+        layout.addWidget(dirs_group)
+        layout.addStretch()
+        widget.setLayout(layout)
+        return widget
+
+    def _add_dir_row(self):
+        """添加目录行"""
+        row = self.dirs_table.rowCount()
+        self.dirs_table.insertRow(row)
+        self.dirs_table.setItem(row, 0, QTableWidgetItem(str(row + 1)))
+        self.dirs_table.setItem(row, 1, QTableWidgetItem(""))
+
+    def _browse_directory(self):
+        """浏览选择目录"""
+        current_row = self.dirs_table.currentRow()
+        dir_path = QFileDialog.getExistingDirectory(self, "选择脚本目录", "")
+        if dir_path:
+            if current_row < 0:
+                current_row = self.dirs_table.rowCount()
+                self.dirs_table.insertRow(current_row)
+                self.dirs_table.setItem(current_row, 0, QTableWidgetItem(str(current_row + 1)))
+            self.dirs_table.setItem(current_row, 1, QTableWidgetItem(dir_path))
+
+    def _delete_dir_row(self):
+        """删除选中的目录行"""
+        current_row = self.dirs_table.currentRow()
+        if current_row >= 0:
+            self.dirs_table.removeRow(current_row)
+            # 重新编号
+            for i in range(self.dirs_table.rowCount()):
+                item = self.dirs_table.item(i, 0)
+                if item:
+                    item.setText(str(i + 1))
 
     def create_execution_tab(self):
         """创建执行设置选项卡"""
@@ -255,6 +337,13 @@ class SettingsDialog(QDialog):
     def load_settings(self):
         """加载设置"""
         try:
+            # 脚本目录设置
+            default_dirs = self.config_manager.get('scripts.default_directories', [])
+            self.dirs_table.setRowCount(len(default_dirs))
+            for i, dir_path in enumerate(default_dirs):
+                self.dirs_table.setItem(i, 0, QTableWidgetItem(str(i + 1)))
+                self.dirs_table.setItem(i, 1, QTableWidgetItem(dir_path))
+
             # 执行设置
             script_timeout = self.config_manager.get('execution.script_timeout', 3600)
             self.script_timeout_spinbox.setValue(script_timeout)
@@ -289,6 +378,15 @@ class SettingsDialog(QDialog):
     def save_settings(self):
         """保存设置"""
         try:
+            # 脚本目录设置
+            default_dirs = []
+            for row in range(self.dirs_table.rowCount()):
+                path_item = self.dirs_table.item(row, 1)
+                path = path_item.text().strip() if path_item else ''
+                if path and os.path.isdir(path):
+                    default_dirs.append(path)
+            self.config_manager.set('scripts.default_directories', default_dirs)
+
             # 执行设置
             script_timeout = self.script_timeout_spinbox.value()
             self.config_manager.set('execution.script_timeout', script_timeout)
@@ -319,7 +417,7 @@ class SettingsDialog(QDialog):
             # 保存到文件
             self.config_manager.save()
 
-            QMessageBox.information(self, "成功", "设置已保存，部分设置将在重启后生效。")
+            QMessageBox.information(self, "成功", "设置已保存，重启软件后默认目录生效。")
             self.accept()
 
         except Exception as e:

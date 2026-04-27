@@ -229,16 +229,12 @@ class MainWindow(QMainWindow):
         # 保留这些 action 的引用（用于状态更新）
         self.start_action = QAction("开始执行", self)
         self.stop_action = QAction("停止执行", self)
-        self.pause_action = QAction("暂停", self)
-        self.resume_action = QAction("继续", self)
         self.skip_action = QAction("跳过当前", self)
         self.retry_action = QAction("重试失败", self)
 
         # 设置初始状态
         self.start_action.setEnabled(True)
         self.stop_action.setEnabled(False)
-        self.pause_action.setEnabled(False)
-        self.resume_action.setEnabled(False)
         self.skip_action.setEnabled(False)
 
     def _refresh_plugin_menu(self):
@@ -305,15 +301,11 @@ class MainWindow(QMainWindow):
         # 执行面板信号
         self.execution_panel.execution_started.connect(self._on_execution_started)
         self.execution_panel.execution_finished.connect(self._on_execution_finished)
-        self.execution_panel.execution_paused.connect(self._on_execution_paused)
-        self.execution_panel.execution_resumed.connect(self._on_execution_resumed)
 
         # 执行面板控制按钮信号
         self.execution_panel.refresh_requested.connect(self._on_refresh_scripts)
         self.execution_panel.start_requested.connect(self._on_execute_queue)
         self.execution_panel.stop_requested.connect(self._on_stop_execution)
-        self.execution_panel.pause_requested.connect(self._on_pause_execution)
-        self.execution_panel.resume_requested.connect(self._on_resume_execution)
 
         # 结果查看器信号
         self.result_viewer.result_selected.connect(self._on_result_selected)
@@ -396,24 +388,6 @@ class MainWindow(QMainWindow):
         """停止执行"""
         self.execution_panel.stop_execution()
         self.logger.info("Execution stopped")
-    
-    def _on_pause_execution(self):
-        """暂停执行"""
-        try:
-            self.execution_panel.pause_execution()
-            self.logger.info("Pause execution requested")
-        except Exception as e:
-            self.logger.error(f"Error pausing execution: {e}")
-            QMessageBox.critical(self, "错误", f"暂停执行时出错: {e}")
-    
-    def _on_resume_execution(self):
-        """继续执行"""
-        try:
-            self.execution_panel.resume_execution()
-            self.logger.info("Resume execution requested")
-        except Exception as e:
-            self.logger.error(f"Error resuming execution: {e}")
-            QMessageBox.critical(self, "错误", f"恢复执行时出错: {e}")
     
     def _on_retry_failed(self):
         """重试失败的脚本"""
@@ -643,12 +617,10 @@ tr:nth-child(even) {{ background-color: #f2f2f2; }}
         # 更新工具栏按钮状态
         self.start_action.setEnabled(False)   # 禁用开始按钮
         self.stop_action.setEnabled(True)     # 启用停止按钮
-        self.pause_action.setEnabled(True)    # 启用暂停按钮
-        self.resume_action.setEnabled(False)  # 禁用继续按钮（执行开始时）
         self.skip_action.setEnabled(True)     # 启用跳过按钮
 
         # 更新执行面板按钮状态
-        self.execution_panel.set_button_states(is_executing=True, is_paused=False)
+        self.execution_panel.set_button_states(is_executing=True)
 
     def _on_execution_finished(self, execution_id: str, success: bool):
         """执行完成"""
@@ -658,12 +630,10 @@ tr:nth-child(even) {{ background-color: #f2f2f2; }}
         # 更新工具栏按钮状态
         self.start_action.setEnabled(True)    # 启用开始按钮
         self.stop_action.setEnabled(False)    # 禁用停止按钮
-        self.pause_action.setEnabled(False)   # 禁用暂停按钮
-        self.resume_action.setEnabled(False)  # 禁用继续按钮
         self.skip_action.setEnabled(False)    # 禁用跳过按钮
 
         # 更新执行面板按钮状态
-        self.execution_panel.set_button_states(is_executing=False, is_paused=False)
+        self.execution_panel.set_button_states(is_executing=False)
 
         # 窗口非活动时发送系统通知
         if self._tray_icon and not self.isActiveWindow():
@@ -679,34 +649,6 @@ tr:nth-child(even) {{ background-color: #f2f2f2; }}
         if self.can_view_results:
             self.result_viewer.refresh()
 
-    def _on_execution_paused(self, execution_id: str):
-        """执行暂停"""
-        self.status_bar.showMessage(f"执行已暂停: {execution_id}", 3000)
-
-        # 更新工具栏按钮状态
-        self.pause_action.setEnabled(False)   # 禁用暂停按钮
-        self.resume_action.setEnabled(True)   # 启用继续按钮
-        self.stop_action.setEnabled(True)     # 保持停止按钮启用
-
-        # 更新执行面板按钮状态
-        self.execution_panel.set_button_states(is_executing=True, is_paused=True)
-
-        self.logger.info(f"Execution paused: {execution_id}, resume button enabled")
-
-    def _on_execution_resumed(self, execution_id: str):
-        """执行恢复"""
-        self.status_bar.showMessage(f"执行已恢复: {execution_id}", 3000)
-
-        # 更新工具栏按钮状态
-        self.pause_action.setEnabled(True)    # 启用暂停按钮
-        self.resume_action.setEnabled(False)  # 禁用继续按钮
-        self.stop_action.setEnabled(True)     # 保持停止按钮启用
-
-        # 更新执行面板按钮状态
-        self.execution_panel.set_button_states(is_executing=True, is_paused=False)
-        
-        self.logger.info(f"Execution resumed: {execution_id}, pause button enabled")
-    
     def _on_result_selected(self, execution_id: str):
         """结果被选中"""
         self.status_bar.showMessage(f"查看执行结果: {execution_id}")
@@ -762,10 +704,6 @@ tr:nth-child(even) {{ background-color: #f2f2f2; }}
             self.start_action.setEnabled(False)
         if hasattr(self, 'stop_action'):
             self.stop_action.setEnabled(False)
-        if hasattr(self, 'pause_action'):
-            self.pause_action.setEnabled(False)
-        if hasattr(self, 'resume_action'):
-            self.resume_action.setEnabled(False)
         if hasattr(self, 'retry_action'):
             self.retry_action.setEnabled(False)
         if hasattr(self, 'skip_action'):

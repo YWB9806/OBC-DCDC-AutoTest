@@ -10,7 +10,8 @@
     "result_idle_timeout": 5
   },
   "scripts": {
-    "root_path": "TestScripts"
+    "root_path": "TestScripts",
+    "default_directories": []
   },
   "ui": {
     "theme": "default",

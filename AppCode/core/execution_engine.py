@@ -31,7 +31,7 @@ class ExecutionEngine(IExecutionEngine):
     """执行引擎实现"""
 
     # 结果关键词后无输出的默认超时秒数（可由用户在设置中配置）
-    DEFAULT_RESULT_IDLE_TIMEOUT = 5
+    DEFAULT_RESULT_IDLE_TIMEOUT = 30
 
     def __init__(self, logger=None, max_workers: int = 1, config_manager=None):
         """初始化执行引擎
@@ -798,8 +798,17 @@ class ExecutionEngine(IExecutionEngine):
                 if self.logger:
                     self.logger.error(f"Worker error: {e}")
     
+    # 检测结果关键词前最少需要的输出行数
+    MIN_OUTPUT_LINES_FOR_RESULT_CHECK = 30
+
     def _has_result_keyword(self, output_lines: list) -> bool:
-        """快速检测输出中是否已包含结果关键词（合格/不合格/通过/不通过/pass/fail）"""
+        """快速检测输出中是否已包含结果关键词（合格/不合格/通过/不通过/pass/fail）
+
+        要求至少输出一定行数后才开始检测，避免早期日志中的关键词误触发。
+        """
+        # 输出行数不足时不检测，避免早期日志中的关键词误触发
+        if len(output_lines) < self.MIN_OUTPUT_LINES_FOR_RESULT_CHECK:
+            return False
         # 只检查最后20行，提高效率
         for line in reversed(output_lines[-20:]):
             stripped = line.strip()
@@ -915,6 +924,7 @@ class ExecutionEngine(IExecutionEngine):
             result_detected = False              # 是否已检测到结果关键词
             result_detected_time = 0.0           # 检测到结果关键词的时间
             last_output_count = 0                # 上次检查时的输出行数
+            idle_check_count = 0                 # 连续无输出检测次数（需2次确认）
 
             while True:
                 now = time.time()
@@ -932,28 +942,40 @@ class ExecutionEngine(IExecutionEngine):
                     break
 
                 # === 机制2: 结果关键词后无输出超时 ===
-                # 如果已检测到结果关键词，且超过用户配置的秒数没有新输出，认为脚本已完成
+                # 检测到结果关键词后，需连续2次确认无新输出才强制结束（避免误判）
                 if result_detected and (now - result_detected_time) > result_idle_timeout:
                     with self._lock:
                         current_output_count = len(execution_info['output'])
                     if current_output_count == last_output_count:
-                        # 确实没有新输出了，强制结束进程
-                        if self.logger:
-                            self.logger.info(
-                                f"Result detected and no output for {result_idle_timeout}s, "
-                                f"force completing: {execution_id}"
-                            )
-                        self._terminate_process_safe(process, execution_id)
-                        with self._lock:
-                            execution_info['status'] = ExecutionStatus.SUCCESS
-                            execution_info['end_time'] = datetime.now()
-                            execution_info['test_result'] = self._parse_test_result(execution_info['output'])
-                            execution_info['progress'] = 100
-                        break
+                        idle_check_count += 1
+                        if idle_check_count >= 2:
+                            # 连续2次确认无新输出，强制结束进程
+                            if self.logger:
+                                self.logger.info(
+                                    f"Result detected and no output for {result_idle_timeout}s "
+                                    f"(confirmed {idle_check_count} times), "
+                                    f"force completing: {execution_id}"
+                                )
+                            self._terminate_process_safe(process, execution_id)
+                            with self._lock:
+                                execution_info['status'] = ExecutionStatus.SUCCESS
+                                execution_info['end_time'] = datetime.now()
+                                execution_info['test_result'] = self._parse_test_result(execution_info['output'])
+                                execution_info['progress'] = 100
+                            break
+                        else:
+                            # 第一次确认，重置计时器再等一轮
+                            result_detected_time = now
+                            if self.logger:
+                                self.logger.debug(
+                                    f"First no-output confirmation for {execution_id}, "
+                                    f"waiting another {result_idle_timeout}s"
+                                )
                     else:
-                        # 有新输出，重置计时
+                        # 有新输出，重置所有计数器
                         last_output_count = current_output_count
                         result_detected_time = now
+                        idle_check_count = 0
 
                 # === 检查是否被取消 ===
                 should_cancel = False

@@ -564,12 +564,16 @@ class ExecutionService:
     ):
         """保存执行结果"""
         # 确保时间格式正确
+        start_time = execution_info.get('start_time')
+        if isinstance(start_time, datetime):
+            start_time = start_time.isoformat()
         end_time = execution_info.get('end_time')
         if isinstance(end_time, datetime):
             end_time = end_time.isoformat()
-        
+
         update_data = {
             'status': execution_info.get('status'),
+            'start_time': start_time,
             'end_time': end_time,
             'output': '\n'.join(execution_info.get('output', [])),
             'error': execution_info.get('error'),

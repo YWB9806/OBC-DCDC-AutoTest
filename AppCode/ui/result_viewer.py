@@ -180,12 +180,45 @@ class ResultViewer(QWidget):
         
         layout.addWidget(splitter)
         
+        # 批次汇总信息
+        summary_group = QGroupBox("批次汇总")
+        summary_layout = QHBoxLayout(summary_group)
+        summary_layout.setSpacing(10)
+
+        self.batch_total_label = QLabel("总计: 0 条")
+        summary_layout.addWidget(self.batch_total_label)
+        summary_layout.addWidget(QLabel("|"))
+
+        self.batch_pass_label = QLabel("合格: 0")
+        self.batch_pass_label.setStyleSheet("color: green; font-weight: bold;")
+        summary_layout.addWidget(self.batch_pass_label)
+
+        self.batch_fail_label = QLabel("不合格: 0")
+        self.batch_fail_label.setStyleSheet("color: red; font-weight: bold;")
+        summary_layout.addWidget(self.batch_fail_label)
+
+        self.batch_pending_label = QLabel("待判定: 0")
+        self.batch_pending_label.setStyleSheet("color: orange;")
+        summary_layout.addWidget(self.batch_pending_label)
+        summary_layout.addWidget(QLabel("|"))
+
+        self.batch_duration_label = QLabel("运行总时间: --")
+        summary_layout.addWidget(self.batch_duration_label)
+        summary_layout.addWidget(QLabel("|"))
+
+        self.batch_pass_rate_label = QLabel("通过率: --")
+        self.batch_pass_rate_label.setStyleSheet("font-weight: bold;")
+        summary_layout.addWidget(self.batch_pass_rate_label)
+
+        summary_layout.addStretch()
+        layout.addWidget(summary_group)
+
         # 统计信息
         stats_layout = QHBoxLayout()
         self.stats_label = QLabel("总计: 0 | 成功: 0 | 失败: 0")
         stats_layout.addWidget(self.stats_label)
         stats_layout.addStretch()
-        
+
         layout.addLayout(stats_layout)
     
     def _load_suites(self):
@@ -427,7 +460,10 @@ class ResultViewer(QWidget):
                 f"总计: {total} | 成功: {success_count} | 失败: {failed_count} | "
                 f"合格: {pass_count} | 不合格: {fail_count} | 待判定: {pending_count} | 合格率: {pass_rate:.1f}%"
             )
-            
+
+            # 计算批次汇总信息
+            self._update_batch_summary(results)
+
             self.logger.info(f"Loaded {total} execution results")
         
         except Exception as e:
@@ -501,6 +537,97 @@ class ResultViewer(QWidget):
         if index >= 0:
             self.batch_combo.setCurrentIndex(index)
     
+    def _update_batch_summary(self, results):
+        """更新批次汇总信息
+        Args:
+            results: 执行结果列表
+        """
+        if not results:
+            self.batch_total_label.setText("总计: 0 条")
+            self.batch_pass_label.setText("合格: 0")
+            self.batch_fail_label.setText("不合格: 0")
+            self.batch_pending_label.setText("待判定: 0")
+            self.batch_duration_label.setText("运行总时间: --")
+            self.batch_pass_rate_label.setText("通过率: --")
+            return
+
+        total = len(results)
+        pass_count = 0
+        fail_count = 0
+        pending_count = 0
+
+        total_duration = 0.0
+        earliest_start = None
+        latest_end = None
+
+        for r in results:
+            tr = r.get('test_result', '')
+            if tr in ['pass', '合格']:
+                pass_count += 1
+            elif tr in ['fail', '不合格']:
+                fail_count += 1
+            else:
+                pending_count += 1
+
+            duration = self._calculate_duration(r)
+            total_duration += duration
+
+            try:
+                st = r.get('start_time')
+                if st:
+                    if isinstance(st, str):
+                        st = datetime.fromisoformat(st.replace('T', ' ').split('.')[0])
+                    if earliest_start is None or st < earliest_start:
+                        earliest_start = st
+            except Exception:
+                pass
+
+            try:
+                et = r.get('end_time')
+                if et:
+                    if isinstance(et, str):
+                        et = datetime.fromisoformat(et.replace('T', ' ').split('.')[0])
+                    if latest_end is None or et > latest_end:
+                        latest_end = et
+            except Exception:
+                pass
+
+        self.batch_total_label.setText(f"总计: {total} 条")
+        self.batch_pass_label.setText(f"合格: {pass_count}")
+        self.batch_fail_label.setText(f"不合格: {fail_count}")
+        self.batch_pending_label.setText(f"待判定: {pending_count}")
+
+        # 计算总运行时间
+        if earliest_start and latest_end:
+            total_time = (latest_end - earliest_start).total_seconds()
+            if total_time >= 3600:
+                hours = int(total_time // 3600)
+                mins = int((total_time % 3600) // 60)
+                secs = int(total_time % 60)
+                self.batch_duration_label.setText(f"运行总时间: {hours}h{mins}m{secs}s")
+            elif total_time >= 60:
+                mins = int(total_time // 60)
+                secs = int(total_time % 60)
+                self.batch_duration_label.setText(f"运行总时间: {mins}m{secs}s")
+            else:
+                self.batch_duration_label.setText(f"运行总时间: {total_time:.1f}s")
+        else:
+            total_duration_str = f"{total_duration:.1f}s" if total_duration < 60 else f"{total_duration/60:.1f}m"
+            self.batch_duration_label.setText(f"脚本累计耗时: {total_duration_str}")
+
+        completed = pass_count + fail_count
+        if completed > 0:
+            pass_rate = (pass_count / completed * 100)
+            self.batch_pass_rate_label.setText(f"通过率: {pass_rate:.1f}%")
+            if pass_rate >= 90:
+                self.batch_pass_rate_label.setStyleSheet("font-weight: bold; color: green;")
+            elif pass_rate >= 70:
+                self.batch_pass_rate_label.setStyleSheet("font-weight: bold; color: orange;")
+            else:
+                self.batch_pass_rate_label.setStyleSheet("font-weight: bold; color: red;")
+        else:
+            self.batch_pass_rate_label.setText("通过率: --")
+
     def _on_suite_changed(self):
         """测试方案改变时，重新加载批次列表"""
         # 先加载结果以获取批次信息

@@ -681,85 +681,51 @@ class ExecutionPanel(QWidget):
             self.logger.error(f"Error updating output: {e}", exc_info=True)
     
     def _extract_test_result(self, execution_info: dict) -> str:
-        """从执行信息中提取测试结果（修复版 - 支持RUNNING状态）
-        
-        Args:
-            execution_info: 执行信息
-            
-        Returns:
-            测试结果字符串：'合格'、'不合格'、'待判定'、'执行错误'、'超时'或'-'
-        """
+        """从执行信息中提取测试结果 — 仅认定"合格"/"不合格"为最终结果"""
         try:
             from AppCode.utils.constants import TestResult
-            
+
             status = execution_info.get('status')
-            error = execution_info.get('error', '')
             exec_id = execution_info.get('id')
 
-            # 首先检查执行状态
             if status == 'TIMEOUT':
                 return TestResult.TIMEOUT
             elif status == 'ERROR':
                 return TestResult.ERROR
             elif status == 'CANCELLED':
-                return TestResult.PENDING  # 取消的任务标记为待判定
-            
-            # 获取最新的完整输出（直接从服务获取，而不是从execution_info）
+                return TestResult.PENDING
+
             output_lines = []
             if exec_id:
                 try:
                     output_lines = self.execution_service.get_execution_output(exec_id)
-                except Exception as e:
-                    self.logger.warning(f"Failed to get output for {exec_id}: {e}")
-                    # 如果获取失败，使用execution_info中的输出
+                except Exception:
                     output_lines = execution_info.get('output', [])
             else:
                 output_lines = execution_info.get('output', [])
-            
-            # 从输出中查找测试结果（从后往前查找，最后的结果最准确）
+
+            # 只从输出中查找中文最终结果（从后往前）
             for line in reversed(output_lines):
-                line_lower = line.lower()
-                
-                # 检查合格标识
-                if '合格' in line and '不合格' not in line:
-                    return TestResult.PASS
-                elif 'pass' in line_lower and 'fail' not in line_lower:
-                    return TestResult.PASS
-                
-                # 检查不合格标识
-                elif '不合格' in line:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+
+                if '不合格' in stripped:
                     return TestResult.FAIL
-                elif 'fail' in line_lower:
-                    return TestResult.FAIL
-                
-                # 检查待判定标识
-                elif '待判定' in line or '需要确认' in line:
-                    return TestResult.PENDING
-                
-                # 检查错误标识
-                elif 'exception' in line_lower or 'traceback' in line_lower:
-                    return TestResult.ERROR
-            
-            # 如果输出中有错误信息
-            if error and ('exception' in error.lower() or 'error' in error.lower()):
-                return TestResult.ERROR
-            
-            # ⭐ 修复关键点：对于RUNNING状态的处理
+                if '合格' in stripped:
+                    return TestResult.PASS
+
             if status == 'RUNNING':
-                # 如果进度很高但没有找到结果，返回UNKNOWN（不更新结果列）
-                # 这样可以避免在脚本还在运行时显示错误的结果
                 return TestResult.UNKNOWN
-            
-            # 如果没有找到明确的结果，根据执行状态判断
+
+            # 完成但没有明确的中文结果 → 待判定
             if status == 'SUCCESS':
-                # 成功但没有明确结果，标记为待判定（需要人工确认）
                 return TestResult.PENDING
             elif status == 'FAILED':
-                # 失败但没有明确原因，标记为不合格
                 return TestResult.FAIL
-            
+
             return TestResult.UNKNOWN
-        
+
         except Exception as e:
             self.logger.error(f"Error extracting test result: {e}")
             return TestResult.UNKNOWN

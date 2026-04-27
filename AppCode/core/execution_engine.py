@@ -1244,51 +1244,23 @@ class ExecutionEngine(IExecutionEngine):
             self.logger.info(f"Result idle timeout set to: {timeout} seconds")
     
     def _parse_test_result(self, output_lines: list) -> str:
-        """解析测试结果（增强版 - 使用正则提高准确性）
+        """解析测试结果 — 仅认定中文"合格"/"不合格"为最终结果
 
-        Args:
-            output_lines: 输出行列表
-
-        Returns:
-            测试结果: 'pass', 'fail', 'pending', 'error', 'timeout'
+        其他输出（pass/fail/True/False等英文标识）均视为"待判定"。
         """
-        # 从后往前查找，最后的结果最准确，最多检查50行
-        check_count = 0
         for line in reversed(output_lines):
-            check_count += 1
-            if check_count > 50:
-                break
-
-            line_stripped = line.strip()
-            if not line_stripped:
+            stripped = line.strip()
+            if not stripped:
                 continue
 
-            line_lower = line_stripped.lower()
-
-            # 优先检查明确的合格标识（不合格中也包含"合格"，所以要先排除）
-            if ('合格' in line_stripped and '不合格' not in line_stripped) or \
-               ('通过' in line_stripped and '不通过' not in line_stripped):
-                return 'pass'
-            elif _PASS_EN_PATTERN.search(line_stripped) and not _FAIL_EN_PATTERN.search(line_stripped):
+            if '不合格' in stripped:
+                return 'fail'
+            if '合格' in stripped:
                 return 'pass'
 
-            # 检查不合格标识
-            elif '不合格' in line_stripped or '不通过' in line_stripped:
-                return 'fail'
-            elif _FAIL_EN_PATTERN.search(line_stripped):
-                return 'fail'
-
-            # 检查待判定标识
-            elif _PENDING_PATTERN.search(line_stripped):
-                return 'pending'
-            elif 'pending' in line_lower or 'to be confirmed' in line_lower:
-                return 'pending'
-
-            # 检查错误标识
-            elif _ERROR_PATTERN.search(line_stripped):
+            if _ERROR_PATTERN.search(stripped):
                 return 'error'
 
-        # 如果没有找到明确的结果标识，返回待判定
         return 'pending'
     
     def _generate_execution_id(self) -> str:

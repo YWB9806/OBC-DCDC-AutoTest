@@ -212,6 +212,7 @@ class ReportPanel(QWidget):
             excel_columns = self._read_excel_columns(dst_path)
             if excel_columns:
                 default_config = {
+                    "sheet_name": "",
                     "match_column": excel_columns[0],
                     "match_field": "script_name",
                     "header_row": 1,
@@ -578,7 +579,7 @@ class ReportPanel(QWidget):
         try:
             from openpyxl import load_workbook
             wb = load_workbook(template_path, read_only=True)
-            ws = wb.active
+            ws = self._get_worksheet(wb, config)
 
             header_row = config.get('header_row', 1)
             data_start_row = config.get('data_start_row', 2)
@@ -715,7 +716,7 @@ class ReportPanel(QWidget):
 
         try:
             wb = load_workbook(template_path)
-            ws = wb.active
+            ws = self._get_worksheet(wb, config)
 
             header_row = config.get('header_row', 1)
             data_start_row = config.get('data_start_row', 2)
@@ -763,6 +764,13 @@ class ReportPanel(QWidget):
         except Exception as e:
             self.logger.error(f"Excel export failed: {e}")
             QMessageBox.critical(self, "错误", f"导出 Excel 失败:\n{e}")
+
+    def _get_worksheet(self, wb, config: dict):
+        """根据配置获取要映射的工作表"""
+        sheet_name = config.get('sheet_name', '')
+        if sheet_name and sheet_name in wb.sheetnames:
+            return wb[sheet_name]
+        return wb.active
 
     def _find_column_index(self, ws, column_name: str, header_row: int) -> Optional[int]:
         """在工作表中查找列名对应的列索引（1-based）"""

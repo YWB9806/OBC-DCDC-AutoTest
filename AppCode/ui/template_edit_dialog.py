@@ -37,18 +37,14 @@ class TemplateEditDialog(QDialog):
 
     def __init__(self, template_path: str, excel_columns: list,
                  config: dict, parent=None):
-        """初始化
-
-        Args:
-            template_path: Excel 模板文件路径
-            excel_columns: Excel 表头列名列表
-            config: 现有配置字典
-            parent: 父窗口
-        """
+        """初始化"""
         super().__init__(parent)
         self.template_path = template_path
         self.excel_columns = excel_columns
         self.config = config or {}
+
+        # 读取所有 sheet 名称
+        self.sheet_names = self._read_sheet_names()
 
         self.setWindowTitle(f"配置列映射 - {os.path.basename(template_path)}")
         self.setMinimumSize(800, 650)
@@ -56,6 +52,17 @@ class TemplateEditDialog(QDialog):
         self._init_ui()
         self._load_preview()
         self._load_config()
+
+    def _read_sheet_names(self):
+        """读取 Excel 工作簿中的所有 sheet 名称"""
+        try:
+            from openpyxl import load_workbook
+            wb = load_workbook(self.template_path, read_only=True)
+            names = wb.sheetnames
+            wb.close()
+            return names
+        except Exception:
+            return []
 
     def _init_ui(self):
         """初始化UI"""
@@ -85,26 +92,39 @@ class TemplateEditDialog(QDialog):
 
         # 匹配配置
         match_group = QGroupBox("匹配配置")
-        match_layout = QHBoxLayout(match_group)
+        match_layout = QVBoxLayout(match_group)
 
-        match_layout.addWidget(QLabel("匹配列:"))
+        # 第一行：sheet 选择
+        sheet_row = QHBoxLayout()
+        sheet_row.addWidget(QLabel("映射工作表:"))
+        self.sheet_combo = QComboBox()
+        for name in self.sheet_names:
+            self.sheet_combo.addItem(name)
+        sheet_row.addWidget(self.sheet_combo, 1)
+        sheet_row.addStretch()
+        match_layout.addLayout(sheet_row)
+
+        # 第二行：匹配列和字段
+        match_row = QHBoxLayout()
+        match_row.addWidget(QLabel("匹配列:"))
         self.match_column_combo = QComboBox()
         for col in self.excel_columns:
             self.match_column_combo.addItem(col)
-        match_layout.addWidget(self.match_column_combo, 1)
+        match_row.addWidget(self.match_column_combo, 1)
 
-        match_layout.addWidget(QLabel("匹配字段:"))
+        match_row.addWidget(QLabel("匹配字段:"))
         self.match_field_combo = QComboBox()
         for fk, fl in MATCH_FIELDS:
             self.match_field_combo.addItem(fl, fk)
-        match_layout.addWidget(self.match_field_combo, 1)
+        match_row.addWidget(self.match_field_combo, 1)
 
-        match_layout.addWidget(QLabel("数据起始行:"))
+        match_row.addWidget(QLabel("数据起始行:"))
         self.data_start_spin = QSpinBox()
         self.data_start_spin.setMinimum(2)
         self.data_start_spin.setMaximum(100)
         self.data_start_spin.setValue(2)
-        match_layout.addWidget(self.data_start_spin)
+        match_row.addWidget(self.data_start_spin)
+        match_layout.addLayout(match_row)
 
         bottom_layout.addWidget(match_group)
 
@@ -192,6 +212,12 @@ class TemplateEditDialog(QDialog):
 
     def _load_config(self):
         """加载配置到 UI"""
+        # 选择工作表
+        sheet_name = self.config.get('sheet_name', '')
+        idx = self.sheet_combo.findText(sheet_name)
+        if idx >= 0:
+            self.sheet_combo.setCurrentIndex(idx)
+
         match_col = self.config.get('match_column', '')
         idx = self.match_column_combo.findText(match_col)
         if idx >= 0:
@@ -291,6 +317,7 @@ class TemplateEditDialog(QDialog):
             })
 
         return {
+            'sheet_name': self.sheet_combo.currentText() if self.sheet_combo.count() > 0 else '',
             'match_column': self.match_column_combo.currentText(),
             'match_field': self.match_field_combo.currentData(),
             'header_row': 1,

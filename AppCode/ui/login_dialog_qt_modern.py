@@ -56,9 +56,13 @@ class LoginDialog(QDialog):
         from version import get_version_string
         self.setWindowTitle(f"富特科技-测试部-自动化测试软件 v{get_version_string()}")
 
-        # 设置窗口图标
-        import os
-        icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'resources', 'app_icon.png')
+        # 设置窗口图标（与主窗口使用相同的路径逻辑）
+        import os, sys
+        icon_path = os.path.join('resources', 'app_icon.png')
+        if not os.path.exists(icon_path):
+            # 回退：从模块路径计算绝对路径
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            icon_path = os.path.join(base_dir, 'resources', 'app_icon.png')
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
 

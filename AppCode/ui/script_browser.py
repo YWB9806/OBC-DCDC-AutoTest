@@ -1084,11 +1084,20 @@ class ScriptBrowser(QWidget):
         def on_saved(result):
             try:
                 if result['success']:
-                    # 刷新方案列表并选中新方案
+                    # 刷新方案列表并选中新方案（断开信号避免触发加载提示）
                     self._load_suites()
                     index = self.suite_combo.findText(suite_info['name'])
                     if index >= 0:
+                        try:
+                            self.suite_combo.currentIndexChanged.disconnect(self._on_suite_changed)
+                        except Exception:
+                            pass
                         self.suite_combo.setCurrentIndex(index)
+                        self.suite_combo.currentIndexChanged.connect(self._on_suite_changed)
+                        # 更新 current_suite 指向新保存的方案
+                        suite = self.suite_service.get_suite(self.suite_combo.currentData())
+                        if suite:
+                            self._current_suite = suite
                     QMessageBox.information(
                         self, "成功",
                         f"方案 '{suite_info['name']}' 保存成功"

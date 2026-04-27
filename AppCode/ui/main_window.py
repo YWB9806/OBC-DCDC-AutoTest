@@ -76,8 +76,8 @@ class MainWindow(QMainWindow):
         """初始化UI"""
         from version import get_version_string
         self.setWindowTitle(f"富特科技-测试部-自动化测试软件 v{get_version_string()}")
-        # 调整窗口大小：宽度改为800，适应小屏幕显示器
-        self.setGeometry(100, 100, 800, 700)
+        # 调整窗口大小：宽度980确保标题文字完整显示在一行
+        self.setGeometry(100, 100, 980, 700)
         
         # 设置窗口图标
         icon_path = os.path.join('resources', 'app_icon.png')
@@ -144,8 +144,8 @@ class MainWindow(QMainWindow):
         self.main_splitter.addWidget(self.tab_widget)
         
         # 设置分割器初始大小（像素）- 两栏布局
-        # 总宽度800，按比例分配：左250 + 右550 = 800
-        self.main_splitter.setSizes([250, 550])
+        # 总宽度980，按比例分配：左280 + 右700 = 980
+        self.main_splitter.setSizes([280, 700])
         
         # 设置拉伸因子，使右侧面板在窗口调整大小时获得更多空间
         self.main_splitter.setStretchFactor(0, 1)  # 左侧：适度拉伸

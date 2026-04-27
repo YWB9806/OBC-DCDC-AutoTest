@@ -33,12 +33,13 @@ class UpdateService:
     def check_for_updates(self, force: bool = False) -> Optional[Dict[str, Any]]:
         """
         检查更新
-        
+
         Args:
             force: 是否强制检查（忽略检查间隔）
-        
+
         Returns:
-            更新信息字典，如果没有更新则返回None
+            更新信息字典，如果没有更新则返回包含 'has_update': False 的字典
+            如果检查失败则返回包含 'error': True 的字典
             {
                 'has_update': bool,
                 'latest_version': str,
@@ -46,7 +47,8 @@ class UpdateService:
                 'release_notes': str,
                 'download_url': str,
                 'release_date': str,
-                'is_prerelease': bool
+                'is_prerelease': bool,
+                'error': bool  # 新增：标记检查是否失败
             }
         """
         try:
@@ -54,34 +56,54 @@ class UpdateService:
             if not force and not self._should_check_update():
                 self.logger.info("距离上次检查时间未超过间隔，使用缓存的更新信息")
                 return self._cached_update_info
-            
+
             # 获取当前版本
             current_version = get_version_string()
-            
+
             # 从GitHub获取最新版本信息
             latest_info = self._fetch_latest_release()
-            
+
             if not latest_info:
-                self.logger.warning("无法获取最新版本信息")
-                return None
-            
+                self.logger.warning("无法获取最新版本信息（GitHub API不可达或限流）")
+                return {
+                    'has_update': False,
+                    'error': True,
+                    'current_version': current_version,
+                    'latest_version': 'Unknown',
+                    'error_message': '无法连接到GitHub服务器，请检查网络连接或稍后重试。'
+                }
+
             latest_version = latest_info.get('tag_name', '').lstrip('v')
-            
+
             # 检查是否为预发布版本
             is_prerelease = latest_info.get('prerelease', False)
             show_prerelease = UPDATE_CONFIG.get('show_prerelease', False)
-            
+
             # 如果是预发布版本且不显示预发布版本，则跳过
             if is_prerelease and not show_prerelease:
                 self.logger.info(f"跳过预发布版本: {latest_version}")
-                return None
-            
+                update_info = {
+                    'has_update': False,
+                    'error': False,
+                    'latest_version': latest_version,
+                    'current_version': current_version,
+                    'release_notes': latest_info.get('body', ''),
+                    'download_url': self._get_download_url(latest_info),
+                    'release_date': latest_info.get('published_at', ''),
+                    'is_prerelease': is_prerelease,
+                    'html_url': latest_info.get('html_url', '')
+                }
+                self._last_check_time = datetime.now()
+                self._cached_update_info = update_info
+                return update_info
+
             # 比较版本
             has_update = is_newer_version(current_version, latest_version)
-            
+
             # 构建更新信息
             update_info = {
                 'has_update': has_update,
+                'error': False,
                 'latest_version': latest_version,
                 'current_version': current_version,
                 'release_notes': latest_info.get('body', ''),
@@ -90,21 +112,27 @@ class UpdateService:
                 'is_prerelease': is_prerelease,
                 'html_url': latest_info.get('html_url', '')
             }
-            
+
             # 更新缓存
             self._last_check_time = datetime.now()
             self._cached_update_info = update_info
-            
+
             if has_update:
                 self.logger.info(f"发现新版本: {latest_version} (当前版本: {current_version})")
             else:
                 self.logger.info(f"当前已是最新版本: {current_version}")
-            
+
             return update_info
-            
+
         except Exception as e:
             self.logger.error(f"检查更新时发生错误: {e}", exc_info=True)
-            return None
+            return {
+                'has_update': False,
+                'error': True,
+                'current_version': get_version_string(),
+                'latest_version': 'Unknown',
+                'error_message': f'检查更新时发生错误: {str(e)}'
+            }
     
     def _should_check_update(self) -> bool:
         """判断是否应该检查更新"""

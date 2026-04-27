@@ -1042,45 +1042,75 @@ class ScriptBrowser(QWidget):
             self.tree_widget.itemChanged.connect(self._on_item_checked)
     
     def _on_save_suite(self):
-        """保存为方案"""
+        """保存为方案（异步版本 - 避免UI卡顿）"""
         selected_scripts = self.get_selected_scripts()
-        
+
         if not selected_scripts:
             QMessageBox.warning(self, "警告", "请先选择要保存的脚本")
             return
-        
+
         # 显示保存对话框
         dialog = SaveSuiteDialog(selected_scripts, self)
-        if dialog.exec_() == dialog.Accepted:
-            suite_info = dialog.get_suite_info()
-            
+        if dialog.exec_() != dialog.Accepted:
+            return
+
+        suite_info = dialog.get_suite_info()
+
+        # 异步保存方案（避免 os.path.exists 等操作阻塞UI）
+        from PyQt5.QtCore import QThread, pyqtSignal
+
+        class SaveSuiteThread(QThread):
+            finished = pyqtSignal(dict)  # result
+            error = pyqtSignal(str)
+
+            def __init__(self, browser, info):
+                super().__init__()
+                self.browser = browser
+                self.info = info
+
+            def run(self):
+                try:
+                    result = self.browser.suite_service.create_suite(
+                        name=self.info['name'],
+                        script_paths=self.info['script_paths'],
+                        description=self.info['description']
+                    )
+                    self.finished.emit(result)
+                except Exception as e:
+                    self.error.emit(str(e))
+
+        self._save_thread = SaveSuiteThread(self, suite_info)
+
+        def on_saved(result):
             try:
-                result = self.suite_service.create_suite(
-                    name=suite_info['name'],
-                    script_paths=suite_info['script_paths'],
-                    description=suite_info['description']
-                )
-                
                 if result['success']:
+                    # 刷新方案列表并选中新方案
+                    self._load_suites()
+                    index = self.suite_combo.findText(suite_info['name'])
+                    if index >= 0:
+                        self.suite_combo.setCurrentIndex(index)
                     QMessageBox.information(
                         self, "成功",
                         f"方案 '{suite_info['name']}' 保存成功"
                     )
-                    # 刷新方案列表
-                    self._load_suites()
-                    # 选择新创建的方案
-                    index = self.suite_combo.findText(suite_info['name'])
-                    if index >= 0:
-                        self.suite_combo.setCurrentIndex(index)
                 else:
                     QMessageBox.warning(
                         self, "失败",
                         f"保存失败: {result.get('error', '')}"
                     )
-            
             except Exception as e:
-                self.logger.error(f"Error saving suite: {e}")
-                QMessageBox.critical(self, "错误", f"保存方案时出错: {e}")
+                self.logger.error(f"Error in on_saved: {e}")
+            finally:
+                self._save_thread = None
+
+        def on_error(error_msg):
+            self.logger.error(f"Error saving suite: {error_msg}")
+            QMessageBox.critical(self, "错误", f"保存方案时出错: {error_msg}")
+            self._save_thread = None
+
+        self._save_thread.finished.connect(on_saved)
+        self._save_thread.error.connect(on_error)
+        self._save_thread.start()
     
     def _on_manage_suites(self):
         """管理方案"""

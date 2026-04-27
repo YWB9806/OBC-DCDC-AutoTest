@@ -926,6 +926,27 @@ class ExecutionEngine(IExecutionEngine):
             last_output_count = 0                # 上次检查时的输出行数
             idle_check_count = 0                 # 连续无输出检测次数（需2次确认）
 
+            # ===== 专用读取线程 + 队列（修复线程泄漏和数据丢失问题）=====
+            import queue as queue_module
+            output_queue = queue_module.Queue()
+
+            def reader_thread():
+                """专用后台线程：持续从进程stdout逐行读取并放入队列"""
+                try:
+                    for line_bytes in iter(process.stdout.readline, b''):
+                        if line_bytes:
+                            output_queue.put(('line', line_bytes))
+                except Exception as e:
+                    if self.logger:
+                        self.logger.debug(f"Reader thread error: {e}")
+                    try:
+                        output_queue.put(('error', str(e)))
+                    except Exception:
+                        pass
+
+            reader = threading.Thread(target=reader_thread, daemon=True, name=f"stdout-reader-{execution_id}")
+            reader.start()
+
             while True:
                 now = time.time()
 
@@ -942,14 +963,12 @@ class ExecutionEngine(IExecutionEngine):
                     break
 
                 # === 机制2: 结果关键词后无输出超时 ===
-                # 检测到结果关键词后，需连续2次确认无新输出才强制结束（避免误判）
                 if result_detected and (now - result_detected_time) > result_idle_timeout:
                     with self._lock:
                         current_output_count = len(execution_info['output'])
                     if current_output_count == last_output_count:
                         idle_check_count += 1
                         if idle_check_count >= 2:
-                            # 连续2次确认无新输出，强制结束进程
                             if self.logger:
                                 self.logger.info(
                                     f"Result detected and no output for {result_idle_timeout}s "
@@ -964,15 +983,8 @@ class ExecutionEngine(IExecutionEngine):
                                 execution_info['progress'] = 100
                             break
                         else:
-                            # 第一次确认，重置计时器再等一轮
                             result_detected_time = now
-                            if self.logger:
-                                self.logger.debug(
-                                    f"First no-output confirmation for {execution_id}, "
-                                    f"waiting another {result_idle_timeout}s"
-                                )
                     else:
-                        # 有新输出，重置所有计数器
                         last_output_count = current_output_count
                         result_detected_time = now
                         idle_check_count = 0
@@ -991,111 +1003,66 @@ class ExecutionEngine(IExecutionEngine):
                         process.kill()
                     break
 
-                # 检查进程是否已经结束
+                # === 检查进程是否已结束 ===
                 poll_result = process.poll()
 
-                # 使用非阻塞方式读取stdout
+                # === 从队列获取输出行（非阻塞，100ms超时）===
                 try:
-                    read_result = [None]
-                    read_error = [None]
-
-                    def do_read():
-                        try:
-                            read_result[0] = process.stdout.readline()
-                        except Exception as e:
-                            read_error[0] = e
-
-                    read_thread = threading.Thread(target=do_read, daemon=True)
-                    read_thread.start()
-                    read_thread.join(timeout=0.1)  # 100ms超时
-
-                    if read_thread.is_alive():
-                        # 读取超时，检查进程状态
-                        if poll_result is not None:
-                            # 进程已结束，退出循环
-                            if self.logger:
-                                self.logger.info(f"Process ended (read timeout), exit code: {poll_result} for {execution_id}")
-                            break
-                        # 进程还在运行，继续等待
-                        time.sleep(0.05)
-                        continue
-
-                    if read_error[0]:
-                        raise read_error[0]
-
-                    line_bytes = read_result[0]
-
-                except Exception as e:
-                    if self.logger:
-                        self.logger.debug(f"Read error (non-critical): {e}")
-                    line_bytes = None
-
-                if line_bytes:
-                    line = smart_decode(line_bytes).rstrip()
-                    with self._lock:
-                        execution_info['output'].append(line)
-                        # 更新进度（简单估算）
-                        execution_info['progress'] = min(90, len(execution_info['output']) * 2)
-
-                    # 更新最后输出时间
-                    last_output_time = time.time()
-
-                    # 检测结果关键词
-                    if not result_detected and self._has_result_keyword(execution_info['output']):
-                        result_detected = True
-                        result_detected_time = time.time()
+                    msg_type, data = output_queue.get(timeout=0.1)
+                    if msg_type == 'line':
+                        line = smart_decode(data).rstrip()
                         with self._lock:
-                            last_output_count = len(execution_info['output'])
+                            execution_info['output'].append(line)
+                            execution_info['progress'] = min(90, len(execution_info['output']) * 2)
+
+                        # 检测结果关键词
+                        if not result_detected and self._has_result_keyword(execution_info['output']):
+                            result_detected = True
+                            result_detected_time = time.time()
+                            with self._lock:
+                                last_output_count = len(execution_info['output'])
+                            if self.logger:
+                                self.logger.info(f"Result keyword detected in output for {execution_id}, "
+                                                 f"will auto-complete after {result_idle_timeout}s idle")
+
+                    elif msg_type == 'error':
                         if self.logger:
-                            self.logger.info(f"Result keyword detected in output for {execution_id}, "
-                                             f"will auto-complete after {self.RESULT_IDLE_TIMEOUT}s idle")
+                            self.logger.debug(f"Reader thread reported error: {data}")
+                        # 如果进程已结束，正常退出；否则继续等待
+                        if poll_result is not None:
+                            break
 
-                elif poll_result is not None:
-                    # 进程已结束且没有更多输出，读取剩余数据后退出
-                    if self.logger:
-                        self.logger.info(f"Process ended with return code: {poll_result} for {execution_id}")
-
-                    # 尝试读取剩余输出（带超时）
-                    try:
-                        remaining_result = [None]
-                        def read_remaining():
-                            remaining_result[0] = process.stdout.read()
-
-                        read_thread = threading.Thread(target=read_remaining, daemon=True)
-                        read_thread.start()
-                        read_thread.join(timeout=2)  # 2秒超时
-
-                        if not read_thread.is_alive() and remaining_result[0]:
-                            remaining = smart_decode(remaining_result[0])
-                            for line in remaining.split('\n'):
-                                if line.strip():
+                except queue_module.Empty:
+                    # 队列为空（100ms内无新输出）
+                    if poll_result is not None:
+                        # 进程已退出，等待reader线程耗尽
+                        reader.join(timeout=1)
+                        # 清空队列中剩余的行
+                        while True:
+                            try:
+                                msg_type, data = output_queue.get(timeout=0.1)
+                                if msg_type == 'line':
+                                    line = smart_decode(data).rstrip()
                                     with self._lock:
-                                        execution_info['output'].append(line.rstrip())
-                    except Exception as e:
+                                        execution_info['output'].append(line)
+                                        execution_info['progress'] = min(90, len(execution_info['output']) * 2)
+                            except queue_module.Empty:
+                                break
+
                         if self.logger:
-                            self.logger.debug(f"Error reading remaining output: {e}")
+                            self.logger.info(f"Process ended with return code: {poll_result} for {execution_id}")
 
-                    # 读取stderr（带超时）
-                    try:
-                        stderr_result = [None]
-                        def do_read_stderr():
-                            stderr_result[0] = process.stderr.read()
+                        # 读取stderr
+                        try:
+                            stderr_output = smart_decode(process.stderr.read())
+                            stderr_lines = stderr_output.strip().split('\n') if stderr_output.strip() else []
+                        except Exception:
+                            pass
 
-                        stderr_thread = threading.Thread(target=do_read_stderr, daemon=True)
-                        stderr_thread.start()
-                        stderr_thread.join(timeout=2)
-
-                        if not stderr_thread.is_alive() and stderr_result[0]:
-                            stderr_output = smart_decode(stderr_result[0])
-                            stderr_lines = stderr_output.strip().split('\n')
-                    except Exception as e:
-                        if self.logger:
-                            self.logger.debug(f"Error reading stderr: {e}")
-
-                    break
+                        break
 
                 # 短暂休眠避免CPU占用过高
-                time.sleep(0.05)
+                time.sleep(0.02)
 
             return_code = process.returncode
 

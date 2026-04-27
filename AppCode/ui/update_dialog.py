@@ -273,31 +273,54 @@ def show_update_dialog(parent=None, force_check: bool = False) -> Optional[QDial
         # 检查更新
         service = get_update_service()
         update_info = service.check_for_updates(force=force_check)
-        
-        if not update_info or not update_info.get('has_update'):
+
+        if update_info is None:
             if force_check:
+                QMessageBox.warning(
+                    parent,
+                    "检查更新",
+                    "无法获取更新信息，请检查网络连接后重试。"
+                )
+            return None
+
+        # 检查是否出错
+        if update_info.get('error'):
+            if force_check:
+                error_msg = update_info.get('error_message', '无法连接到GitHub服务器')
+                QMessageBox.warning(
+                    parent,
+                    "检查更新失败",
+                    f"{error_msg}\n\n请检查网络连接或稍后重试。"
+                )
+            return None
+
+        # 没有更新
+        if not update_info.get('has_update'):
+            if force_check:
+                current = update_info.get('current_version', '')
                 QMessageBox.information(
                     parent,
                     "检查更新",
-                    "当前已是最新版本！"
+                    f"当前已是最新版本！\n版本: v{current}"
                 )
             return None
-        
+
         # 检查是否跳过此版本
         if not force_check and _should_skip_version(update_info.get('latest_version')):
             return None
-        
+
         # 显示更新对话框
         dialog = UpdateDialog(update_info, parent)
-        dialog.exec_()  # PyQt5使用exec_()而不是exec()
+        dialog.exec_()
         return dialog
-        
+
     except Exception as e:
-        QMessageBox.critical(
-            parent,
-            "错误",
-            f"检查更新时发生错误: {str(e)}"
-        )
+        if force_check:
+            QMessageBox.critical(
+                parent,
+                "错误",
+                f"检查更新时发生错误: {str(e)}"
+            )
         return None
 
 

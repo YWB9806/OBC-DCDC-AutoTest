@@ -7,7 +7,7 @@
     "timeout": 3600,
     "mode": "sequential",
     "script_timeout": 3600,
-    "result_idle_timeout": 5
+    "result_idle_timeout": 300
   },
   "scripts": {
     "root_path": "TestScripts",

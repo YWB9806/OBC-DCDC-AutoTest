@@ -468,7 +468,7 @@ class MainWindow(QMainWindow):
                 engine = self.container.resolve('execution_engine')
                 if engine:
                     engine.set_timeout(config_manager.get('execution.script_timeout', 3600))
-                    engine.set_result_idle_timeout(config_manager.get('execution.result_idle_timeout', 5))
+                    engine.set_result_idle_timeout(config_manager.get('execution.result_idle_timeout', 300))
                 self.logger.info("Settings saved and applied to engine")
                 self.status_bar.showMessage("设置已保存", 3000)
                 # 刷新插件菜单

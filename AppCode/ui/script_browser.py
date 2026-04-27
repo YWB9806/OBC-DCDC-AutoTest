@@ -8,7 +8,7 @@ from PyQt5.QtWidgets import (
     QTreeWidgetItem, QLineEdit, QPushButton, QLabel,
     QCheckBox, QComboBox, QMessageBox, QMenu, QAction
 )
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 from PyQt5.QtGui import QIcon
 import os
 
@@ -93,6 +93,13 @@ class ScriptBrowser(QWidget):
         self.tree_widget.itemChanged.connect(self._on_item_checked)
         self.tree_widget.itemDoubleClicked.connect(self._on_item_double_clicked)
         layout.addWidget(self.tree_widget)
+
+        # 防抖定时器：批量处理复选框变化，避免逐个触发时卡顿
+        self._check_debounce_timer = QTimer(self)
+        self._check_debounce_timer.setSingleShot(True)
+        self._check_debounce_timer.setInterval(50)  # 50ms 防抖
+        self._check_debounce_timer.timeout.connect(self._on_check_debounce_timeout)
+        self._debounce_pending = False
 
         # 列显示状态（默认隐藏路径和状态列）
         self._column_visibility = {
@@ -541,13 +548,18 @@ class ScriptBrowser(QWidget):
     
 
     def _on_item_checked(self, item, column):
-        """复选框状态改变"""
+        """复选框状态改变（使用防抖避免批量操作时卡顿）"""
         if column != 0:
             return
-        
-        # 获取所有选中的脚本
+        # 使用防抖：多次变化合并为一次处理
+        if not self._debounce_pending:
+            self._debounce_pending = True
+            self._check_debounce_timer.start()
+
+    def _on_check_debounce_timeout(self):
+        """防抖定时器超时 — 批量处理复选框变化"""
+        self._debounce_pending = False
         checked_scripts = self._get_checked_scripts()
-        
         if len(checked_scripts) == 1:
             self.script_selected.emit(checked_scripts[0])
         elif len(checked_scripts) > 1:
@@ -682,41 +694,27 @@ class ScriptBrowser(QWidget):
         return self._get_checked_scripts()
     
     def _load_suites(self):
-        """加载方案列表"""
+        """加载方案列表（使用 blockSignals 避免触发 _on_suite_changed）"""
         try:
             suites = self.suite_service.list_suites()
-            
-            # 保存当前选择
             current_text = self.suite_combo.currentText()
-            
-            # 临时断开信号，避免在刷新时触发提示
-            self.suite_combo.currentIndexChanged.disconnect(self._on_suite_changed)
-            
-            # 更新下拉框
-            self.suite_combo.clear()
-            self.suite_combo.addItem("-- 未选择方案 --")
-            
-            for suite in suites:
-                self.suite_combo.addItem(suite['name'], suite['id'])
-            
-            # 恢复选择
-            index = self.suite_combo.findText(current_text)
-            if index >= 0:
-                self.suite_combo.setCurrentIndex(index)
-            
-            # 重新连接信号
-            self.suite_combo.currentIndexChanged.connect(self._on_suite_changed)
-            
+
+            self.suite_combo.blockSignals(True)
+            try:
+                self.suite_combo.clear()
+                self.suite_combo.addItem("-- 未选择方案 --")
+                for suite in suites:
+                    self.suite_combo.addItem(suite['name'], suite['id'])
+                index = self.suite_combo.findText(current_text)
+                if index >= 0:
+                    self.suite_combo.setCurrentIndex(index)
+            finally:
+                self.suite_combo.blockSignals(False)
+
             self.logger.info(f"Loaded {len(suites)} test suites")
-        
         except Exception as e:
             self.logger.error(f"Error loading suites: {e}")
-            # 确保信号重新连接
-            try:
-                self.suite_combo.currentIndexChanged.disconnect(self._on_suite_changed)
-            except Exception:
-                pass
-            self.suite_combo.currentIndexChanged.connect(self._on_suite_changed)
+            self.suite_combo.blockSignals(False)
     
     def _on_suite_changed(self, index, show_message=True):
         """方案选择改变（异步加载版本 - 避免UI卡顿）
@@ -1084,17 +1082,15 @@ class ScriptBrowser(QWidget):
         def on_saved(result):
             try:
                 if result['success']:
-                    # 刷新方案列表并选中新方案（断开信号避免触发加载提示）
                     self._load_suites()
+                    # 选中新保存的方案（blockSignals 避免触发加载提示）
                     index = self.suite_combo.findText(suite_info['name'])
                     if index >= 0:
+                        self.suite_combo.blockSignals(True)
                         try:
-                            self.suite_combo.currentIndexChanged.disconnect(self._on_suite_changed)
-                        except Exception:
-                            pass
-                        self.suite_combo.setCurrentIndex(index)
-                        self.suite_combo.currentIndexChanged.connect(self._on_suite_changed)
-                        # 更新 current_suite 指向新保存的方案
+                            self.suite_combo.setCurrentIndex(index)
+                        finally:
+                            self.suite_combo.blockSignals(False)
                         suite = self.suite_service.get_suite(self.suite_combo.currentData())
                         if suite:
                             self._current_suite = suite

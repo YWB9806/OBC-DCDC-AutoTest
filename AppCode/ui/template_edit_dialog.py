@@ -46,8 +46,9 @@ class TemplateEditDialog(QDialog):
         # 读取所有 sheet 名称
         self.sheet_names = self._read_sheet_names()
 
-        self.setWindowTitle(f"配置列映射 - {os.path.basename(template_path)}")
+        self.setWindowTitle(f"匹配映射 - {os.path.basename(template_path)}")
         self.setMinimumSize(800, 650)
+        self.setWindowFlag(Qt.WindowMinMaxButtonsHint, True)
         self.resize(900, 720)
         self._init_ui()
         self._load_preview()

@@ -159,12 +159,12 @@ class SettingsDialog(QDialog):
         self.script_timeout_spinbox = QSpinBox()
         self.script_timeout_spinbox.setMinimum(60)  # 最小1分钟
         self.script_timeout_spinbox.setMaximum(86400)  # 最大24小时
-        self.script_timeout_spinbox.setSuffix(" 秒")
         self.script_timeout_spinbox.setValue(3600)  # 默认1小时
         self.script_timeout_spinbox.setSingleStep(60)  # 步进60秒
 
         timeout_layout = QHBoxLayout()
         timeout_layout.addWidget(self.script_timeout_spinbox)
+        timeout_layout.addWidget(QLabel("秒"))
         timeout_label = QLabel("(默认: 3600秒 = 1小时)")
         timeout_label.setStyleSheet("color: gray; font-size: 10px;")
         timeout_layout.addWidget(timeout_label)
@@ -175,14 +175,14 @@ class SettingsDialog(QDialog):
         # 结果空闲超时
         self.result_idle_timeout_spinbox = QSpinBox()
         self.result_idle_timeout_spinbox.setMinimum(1)  # 最小1秒
-        self.result_idle_timeout_spinbox.setMaximum(300)  # 最大5分钟
-        self.result_idle_timeout_spinbox.setSuffix(" 秒")
-        self.result_idle_timeout_spinbox.setValue(5)  # 默认5秒
-        self.result_idle_timeout_spinbox.setSingleStep(1)  # 步进1秒
+        self.result_idle_timeout_spinbox.setMaximum(3600)  # 最大1小时
+        self.result_idle_timeout_spinbox.setValue(300)  # 默认300秒 = 5分钟
+        self.result_idle_timeout_spinbox.setSingleStep(10)  # 步进10秒
 
         idle_layout = QHBoxLayout()
         idle_layout.addWidget(self.result_idle_timeout_spinbox)
-        idle_label = QLabel("(默认: 5秒)")
+        idle_layout.addWidget(QLabel("秒"))
+        idle_label = QLabel("(默认: 300秒 = 5分钟)")
         idle_label.setStyleSheet("color: gray; font-size: 10px;")
         idle_layout.addWidget(idle_label)
         idle_layout.addStretch()
@@ -348,7 +348,7 @@ class SettingsDialog(QDialog):
             script_timeout = self.config_manager.get('execution.script_timeout', 3600)
             self.script_timeout_spinbox.setValue(script_timeout)
 
-            result_idle_timeout = self.config_manager.get('execution.result_idle_timeout', 5)
+            result_idle_timeout = self.config_manager.get('execution.result_idle_timeout', 300)
             self.result_idle_timeout_spinbox.setValue(result_idle_timeout)
 
             # 备份设置

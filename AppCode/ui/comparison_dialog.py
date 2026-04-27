@@ -24,6 +24,7 @@ class ComparisonDialog(QDialog):
     def _init_ui(self):
         self.setWindowTitle("执行结果对比")
         self.setMinimumSize(900, 650)
+        self.setWindowFlag(Qt.WindowMinMaxButtonsHint, True)
 
         layout = QVBoxLayout(self)
 
